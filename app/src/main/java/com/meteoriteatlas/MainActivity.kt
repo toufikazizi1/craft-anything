@@ -110,7 +110,7 @@ class MainActivity:AppCompatActivity() {
   val root=LinearLayout(this).apply{orientation=1;setBackgroundColor(Color.rgb(12,25,34))}
   root.addView(TextView(this).apply{text="☄  METEORITE ATLAS • RADAR";textSize=20f;setTextColor(Color.WHITE);gravity=Gravity.CENTER_VERTICAL;setPadding(dp(16),0,dp(12),0);setBackgroundColor(Color.rgb(18,48,60))},LinearLayout.LayoutParams(-1,dp(56)))
   val panel=LinearLayout(this).apply{orientation=1;setPadding(dp(9),dp(7),dp(9),dp(4))}
-  query=EditText(this).apply{hint="ابحث بالاسم أو المكان أو التصنيف أو السنة";singleLine=true;textSize=14f;setTextColor(Color.WHITE);setHintTextColor(Color.LTGRAY);imeOptions=EditorInfo.IME_ACTION_SEARCH;setPadding(dp(12),0,dp(12),0);setBackgroundColor(Color.rgb(31,52,63))}
+  query=EditText(this).apply{hint="ابحث بالاسم أو المكان أو التصنيف أو السنة";setSingleLine(true);textSize=14f;setTextColor(Color.WHITE);setHintTextColor(Color.LTGRAY);imeOptions=EditorInfo.IME_ACTION_SEARCH;setPadding(dp(12),0,dp(12),0);setBackgroundColor(Color.rgb(31,52,63))}
   panel.addView(query,LinearLayout.LayoutParams(-1,dp(46)))
   val row=LinearLayout(this).apply{orientation=0}
   row.addView(Button(this).apply{text="بحث";setOnClickListener{applyFilter()}},LinearLayout.LayoutParams(0,dp(44),1f))
