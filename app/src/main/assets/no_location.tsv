@@ -718,20 +718,19 @@ Northwest Africa 10093	2013	LL5	26.0	Official
 Northwest Africa 13268	2013	H4/5	333.2	Official
 Northwest Africa 14091	2013	Eucrite	37.0	Official
 Northwest Africa 14903	2012	H4	50.61	Official
-Northwest Africa 10158	2011	Mesosiderite	403.0	Official
 Northwest Africa 6992	2011	CR2	237.0	Official
 Northwest Africa 7180	2011	H3.6	240.5	Official
-Northwest Africa 17777	2010	Brachinite	1785.0	Official
-Northwest Africa 17778	2010	H5	54.1	Official
+Northwest Africa 10158	2011	Mesosiderite	403.0	Official
 Northwest Africa 6157	2010	Diogenite-olivine	42.0	Official
 Northwest Africa 6342	2010	Martian (shergottite)	72.2	Official
 Northwest Africa 6424	2010	Achondrite-ung	469.0	Official
+Northwest Africa 17777	2010	Brachinite	1785.0	Official
+Northwest Africa 17778	2010	H5	54.1	Official
 Northwest Africa 5945	2009	H/L3	375.2	Official
 Northwest Africa 6204	2009	L4-6	43.5	Official
 Northwest Africa 6369	2009	Iron, IAB complex	14830.0	Official
 Northwest Africa 5234	2008	Eucrite-mmict	399.0	Official
 Northwest Africa 5436	2008	CVred3	1772.0	Official
-Northwest Africa 15485	2007	LL3	75.0	Official
 Northwest Africa 4769	2007	LL3	332.0	Official
 Northwest Africa 4799	2007	EH-melt rock	365.0	Official
 Northwest Africa 4872	2007	Brachinite	3000.0	Official
@@ -739,6 +738,7 @@ Northwest Africa 4874	2007	Brachinite	28.0	Official
 Northwest Africa 4882	2007	Brachinite	3097.0	Official
 Northwest Africa 5151	2007	Lunar	289.0	Official
 Northwest Africa 5515	2007	CK4	13700.0	Official
+Northwest Africa 15485	2007	LL3	75.0	Official
 Northwest Africa 2996	2006	Lunar	968.0	Official
 Northwest Africa 3270	2006	Eucrite-pmict	943.0	Official
 Northwest Africa 3310	2006	Eucrite-pmict	679.0	Official
@@ -782,9 +782,9 @@ Northwest Africa 4440	2005	H4	403.0	Official
 Northwest Africa 4443	2005	H4	118.0	Official
 Northwest Africa 4502	2005	CVox3	100000.0	Official
 Northwest Africa 4661	2005	CK3	42.0	Official
-Northwest Africa 14901	2004	H5	7.55	Official
 Northwest Africa 3171	2004	Martian (shergottite)	506.0	Official
 Northwest Africa 4270	2004	L4	22.0	Official
+Northwest Africa 14901	2004	H5	7.55	Official
 Northwest Africa 2561	2003	LL5	67.9	Official
 Northwest Africa 2562	2003	LL5	52.3	Official
 Northwest Africa 4259	2003	LL4-6	480.0	Official
@@ -801,10 +801,14 @@ Northwest Africa 5461	2003	H5	136.3	Official
 Northwest Africa 5462	2003	LL6	1200.0	Official
 Northwest Africa 5466	2003	L5	688.0	Official
 Northwest Africa 5764	2003	LL6	502.0	Official
-Northwest Africa 2739	2002	Howardite	824.0	Official
 Northwest Africa 316	2002	H4	60.25	Official
 Northwest Africa 317	2002	H4	197.74	Official
 Northwest Africa 318	2002	H4	127.73	Official
+Northwest Africa 2739	2002	Howardite	824.0	Official
 Northwest Africa 4256	2002	L6	25.0	Official
 Northwest Africa 4257	2002	H3.9	43.0	Official
 Northwest Africa 4258	2002	H5	15.0	Official
+Acfer 383		Unknown	0.0	Provisional
+Acfer 384		Unknown	0.0	Provisional
+Acfer 385		Unknown	0.0	Provisional
+Northwest Africa 6704		Achondrite-ung	8387.0	Official

@@ -16,8 +16,6 @@ object AlgeriaFilter {
     }
 
     fun keep(lat: Double, lon: Double, place: String, year: String): Boolean {
-        val y = Regex("(19|20)\\d{2}").find(year)?.value?.toIntOrNull() ?: return false
-        if (y < 2000 || y > 2026) return false
         val p = place.lowercase()
         if (p.contains("algeria") || p.contains("algérie") || p.contains("الجزائر")) return true
         return inside(lat, lon)

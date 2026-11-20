@@ -29,6 +29,9 @@ import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.tileprovider.cachemanager.CacheManager
+import org.osmdroid.tileprovider.modules.SqlTileWriter
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.MapView
@@ -67,6 +70,8 @@ class MainActivity:AppCompatActivity() {
  private lateinit var metAdapter:ArrayAdapter<String>
  private lateinit var fireAdapter:ArrayAdapter<String>
  private lateinit var fireInfo:TextView
+ private lateinit var dlInfo:TextView
+ private var downloading=false
  private val worker=Executors.newSingleThreadExecutor()
  private val cache by lazy { File(filesDir,"meteorites.csv") }
  private val officialCache by lazy { File(filesDir,"metbull_official.csv") }
@@ -93,6 +98,15 @@ class MainActivity:AppCompatActivity() {
   Configuration.getInstance().userAgentValue="$packageName/1.3 (Meteorite Atlas Android)"
   Configuration.getInstance().tileFileSystemCacheMaxBytes=512L*1024*1024
   Configuration.getInstance().tileFileSystemCacheTrimBytes=384L*1024*1024
+  Configuration.getInstance().tileFileSystemCacheMaxBytes=3000L*1024*1024
+  Configuration.getInstance().tileFileSystemCacheTrimBytes=2500L*1024*1024
+  Configuration.getInstance().setTileDownloadThreads(12.toShort())
+  Configuration.getInstance().setTileFileSystemThreads(8.toShort())
+  Configuration.getInstance().setTileDownloadMaxQueueSize(120.toShort())
+  Configuration.getInstance().setTileFileSystemMaxQueueSize(120.toShort())
+  Configuration.getInstance().setCacheMapTileCount(80.toShort())
+  Configuration.getInstance().setExpirationOverrideDuration(1000L*60*60*24*365*5)
+  try{File(filesDir,"meteorites.csv").delete()}catch(_:Exception){}
   offline=prefs.getBoolean("offline",false)
   makeUi()
   points=PointsOverlay(this,{m->showMeteorite(m)},{g,c->onGroupTap(g,c)},{e->showFireball(e)})
@@ -126,7 +140,7 @@ class MainActivity:AppCompatActivity() {
   val mapPage=FrameLayout(this)
   map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=true;setUseDataConnection(!offline);minZoomLevel=3.0}
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
-  countChip=TextView(this).apply{text="☄ …";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
+  countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
   mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
   fun fab(t:String,k:Int,f:()->Unit){
    val v=TextView(this).apply{text=t;textSize=22f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=round(Color.argb(235,16,35,45));setOnClickListener{f()}}
@@ -174,7 +188,14 @@ class MainActivity:AppCompatActivity() {
   p3.addView(mapStyle,lp(dp(46)))
   offlineButton=btn(""){offline=!offline;prefs.edit().putBoolean("offline",offline).apply();map.setUseDataConnection(!offline);updateOfflineButton();say(if(offline)"وضع عدم الاتصال: يُعرض فقط ما سبق تخزينه من الخريطة، ونقاط النيازك محلية." else "الاتصال مفعّل: تُحمّل مربعات الخريطة عند عرضها.")}
   p3.addView(offlineButton,lp(dp(48)));updateOfflineButton()
-  p3.addView(btn("🔄 تحديث بيانات النيازك"){load(true)},lp(dp(48)))
+  p3.addView(note("الخريطة بدون إنترنت: حمّل الخريطة وأنت متصل (أقمار صناعية + أسماء الولايات والطرق) ثم تعمل بعدها بدون إنترنت."))
+  p3.addView(btn("⬇ تحميل خريطة الجزائر كاملة (حتى zoom 9)"){downloadArea(BoundingBox(37.3,12.2,18.9,-8.8),3,9,"الجزائر كاملة")},lp(dp(48)))
+  p3.addView(btn("⬇ تحميل المنطقة الظاهرة على الخريطة بتفصيل أعلى"){
+   val bb=map.boundingBox
+   downloadArea(BoundingBox(bb.latNorth,bb.lonEast,bb.latSouth,bb.lonWest),map.zoomLevelDouble.toInt().coerceAtLeast(3),14,"المنطقة الظاهرة")
+  },lp(dp(48)))
+  dlInfo=note("");p3.addView(dlInfo)
+  p3.addView(btn("🔄 إعادة تحميل قاعدة النيازك المحلية"){load(true)},lp(dp(48)))
   p3.addView(btn("📥 استيراد CSV من Meteoritical Bulletin"){val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="text/*"};startActivityForResult(i,4102)},lp(dp(48)))
   p3.addView(note("• النقاط تعمل بدون إنترنت (محفوظة في التطبيق).\n• الخريطة تُخزَّن مؤقتاً أثناء تصفحها؛ تصفّح المنطقة وأنت متصل لتبقى متاحة بعدها.\n• GPS يعمل بدون إنترنت.\n• التنبيهات والرادار يحتاجان إنترنت.\n\nالمصادر: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © OpenStreetMap contributors • © Esri • OpenTopoMap"))
   sv.addView(p3,FrameLayout.LayoutParams(-1,-2))
@@ -203,7 +224,7 @@ class MainActivity:AppCompatActivity() {
  }
  private fun goTo(lat:Double,lon:Double,zoom:Double){showPage(0);map.controller.setZoom(zoom);map.controller.animateTo(GeoPoint(lat,lon))}
  private fun onGroupTap(g:List<Meteorite>,center:GeoPoint){
-  if(map.zoomLevelDouble>=16.5)showGroup(g) else {map.controller.setZoom(minOf(map.zoomLevelDouble+2.5,18.0));map.controller.animateTo(center)}
+  showGroup(g)
  }
 
  private fun locate(){
@@ -245,6 +266,32 @@ class MainActivity:AppCompatActivity() {
   prefs.edit().putBoolean("alerts",true).apply();updateAlertsButton()
   say("التنبيهات مفعّلة: يفحص التطبيق NASA كل 15 دقيقة تقريباً (يحتاج إنترنت).")
  }
+ private fun downloadArea(bb:BoundingBox,zmin:Int,zmax:Int,label:String){
+  if(downloading){say("هناك تحميل جارٍ.");return}
+  if(offline){say("فعّل وضع الاتصال أولاً.");return}
+  val srcs=listOf(esri("Esri World Imagery","World_Imagery",".jpg"),esri("Esri Boundaries Places","Reference/World_Boundaries_and_Places",".png"),esri("Esri Transportation","Reference/World_Transportation",".png"))
+  val total=try{CacheManager(srcs[0],SqlTileWriter(),zmin,zmax).possibleTilesInArea(bb,zmin,zmax)}catch(e:Exception){0}
+  if(total>30000){say("المنطقة كبيرة جداً ($total مربع). قرّب الخريطة على منطقة أصغر ثم أعد المحاولة.");return}
+  val mb=total*3*25/1024
+  AlertDialog.Builder(this).setTitle("تحميل: $label").setMessage("المربعات: $total لكل طبقة × 3 طبقات.\nالحجم التقريبي: ${mb} ميغابايت.\nيُنصح بالواي فاي.")
+   .setPositiveButton("ابدأ"){_,_->
+    downloading=true
+    var idx=0
+    fun next(){
+     if(idx>=srcs.size){downloading=false;dlInfo.text="✅ اكتمل تحميل: $label. يمكنك الآن تفعيل وضع عدم الاتصال.";return}
+     val names=listOf("الأقمار الصناعية","أسماء الولايات والأماكن","الطرق")
+     val cm=CacheManager(srcs[idx],SqlTileWriter(),zmin,zmax)
+     cm.downloadAreaAsync(this,bb,zmin,zmax,object:CacheManager.CacheManagerCallback{
+      override fun onTaskComplete(){idx++;next()}
+      override fun onTaskFailed(errors:Int){dlInfo.text="طبقة ${names[idx]}: انتهت مع $errors أخطاء (ربما انقطع النت)";idx++;next()}
+      override fun updateProgress(progress:Int,currentZoomLevel:Int,zoomMin:Int,zoomMax:Int){dlInfo.text="تحميل ${names[idx]}: $progress / $total (zoom $currentZoomLevel)"}
+      override fun downloadStarted(){}
+      override fun setPossibleTilesInArea(total:Int){}
+     })
+    }
+    next()
+   }.setNegativeButton("إلغاء",null).show()
+ }
  private fun updateOfflineButton(){offlineButton.text=if(offline)"● وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "● وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"}
 
  private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,19,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
@@ -275,27 +322,14 @@ class MainActivity:AppCompatActivity() {
  }
 
  private fun load(force:Boolean){
-  if(officialCache.exists() && officialCache.length()>1000){try{val official=parseCsv(officialCache.readText(Charsets.UTF_8));if(official.isNotEmpty()){data=official;localDb.replaceAll(official);applyFilter();say("تم تحميل ${official.size} سجلاً من ملف MetBull الذي استوردته.");return}}catch(_:Exception){}}
-  if(!cache.exists()||cache.length()<1000){try{assets.open("meteorites.csv").use{i->cache.outputStream().use{o->i.copyTo(o)}}}catch(_:Exception){}}
-  if(force)say("جارٍ تحديث البيانات…")
   worker.execute{try{
-   if(force){
-    val tree=JSONObject(get("https://api.github.com/repos/SweetEyesBirb/Meteorite-Landings-Map/git/trees/main?recursive=1"))
-    val files=tree.optJSONArray("tree")?:throw Exception("تعذر قراءة فهرس المصدر")
-    var path:String?=null
-    for(i in 0 until files.length()){val f=files.optJSONObject(i)?:continue;val p=f.optString("path");if(f.optString("type")=="blob"&&p.startsWith("data/")&&p.endsWith(".csv",true)){path=p;break}}
-    val csvPath=path?:throw Exception("لم يتم العثور على CSV")
-    val encoded=csvPath.split("/").joinToString("/"){URLEncoder.encode(it,"UTF-8").replace("+","%20")}
-    val fresh=get("https://raw.githubusercontent.com/SweetEyesBirb/Meteorite-Landings-Map/main/$encoded")
-    if(fresh.length<1000)throw Exception("ملف البيانات المستلم غير مكتمل")
-    val freshParsed=parseCsv(fresh)
-    if(freshParsed.isEmpty())throw Exception("المصدر لا يحتوي نيازك جزائرية 2000–2026")
-    val temp=File(filesDir,"meteorites.csv.tmp");temp.writeText(fresh,Charsets.UTF_8);if(!temp.renameTo(cache)){cache.writeText(fresh,Charsets.UTF_8);temp.delete()}
-   }
-   val parsed=parseCsv(cache.readText(Charsets.UTF_8));if(parsed.isEmpty())throw Exception("لم تُستخرج سجلات بإحداثيات صالحة")
-   localDb.replaceAll(parsed)
-   runOnUiThread{data=parsed;applyFilter();if(force)say("تم: ${data.size} نيزكاً جزائرياً.")}
-  }catch(e:Exception){runOnUiThread{say("تعذر التحديث: ${e.message}");if(cache.exists())try{val parsed=parseCsv(cache.readText(Charsets.UTF_8));if(parsed.isNotEmpty()){data=parsed;applyFilter()}}catch(_:Exception){}}}}
+   val base=assets.open("meteorites.csv").bufferedReader(Charsets.UTF_8).use{it.readText()}
+   var all=parseCsv(base)
+   if(officialCache.exists()&&officialCache.length()>1000){try{all=(all+parseCsv(officialCache.readText(Charsets.UTF_8))).distinctBy{it.name.lowercase(Locale.ROOT)}}catch(_:Exception){}}
+   if(all.isEmpty())throw Exception("لم تُقرأ أي سجلات")
+   try{localDb.replaceAll(all)}catch(_:Exception){}
+   runOnUiThread{data=all;applyFilter();if(force)say("أُعيد تحميل ${all.size} نيزكاً من القاعدة المحلية.")}
+  }catch(e:Exception){runOnUiThread{countChip.text="تعذر تحميل البيانات: ${e.message}";say("تعذر تحميل البيانات: ${e.message}")}}}
  }
  private fun refreshFireList(){
   fireAdapter.clear()
@@ -401,7 +435,7 @@ class MainActivity:AppCompatActivity() {
   points.mets=shown
   listed=shown.sortedByDescending{it.year}
   metAdapter.clear();metAdapter.addAll(listed.map{"${it.name}  •  ${it.year}  •  ${it.cls}"})
-  val txt="☄ ${shown.size} نيزك جزائري (2000–2026) من أصل ${data.size}"
+  val txt="☄ ${shown.size} نيزك جزائري من أصل ${data.size}"
   countChip.text=txt;listInfo.text=txt+" — اضغط على أي نيزك لعرض معلوماته."
   map.invalidate()
  }
@@ -430,7 +464,7 @@ class MainActivity:AppCompatActivity() {
   super.onActivityResult(requestCode,resultCode,result);if(resultCode!=RESULT_OK)return;val uri=result?.data?:return
   if(requestCode==4102){say("جارٍ فحص واستيراد CSV…");worker.execute{try{
    val raw=contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:throw Exception("تعذر فتح الملف")
-   val parsed=parseCsv(raw);if(parsed.isEmpty())throw Exception("لم أجد نيازك جزائرية بإحداثيات (2000–2026) في الملف؛ لم تُستبدل القاعدة.")
+   val parsed=parseCsv(raw);if(parsed.isEmpty())throw Exception("لم أجد نيازك جزائرية بإحداثيات في الملف؛ لم تُستبدل القاعدة.")
    val tmp=File(filesDir,"metbull_official.csv.tmp");tmp.writeText(raw,Charsets.UTF_8);if(!tmp.renameTo(officialCache)){officialCache.writeText(raw,Charsets.UTF_8);tmp.delete()}
    localDb.replaceAll(parsed);runOnUiThread{data=parsed;applyFilter();say("تم استيراد ${parsed.size} سجل.")}
   }catch(e:Exception){runOnUiThread{say("فشل الاستيراد: ${e.message}")}}}}
