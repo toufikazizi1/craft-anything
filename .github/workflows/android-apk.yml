@@ -6,7 +6,7 @@ on:
     branches: [ meteorite-app ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -35,3 +35,12 @@ jobs:
           name: MeteoriteAtlas-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish APK as release (direct phone download)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MeteoriteAtlas.apk
+          gh release create "meteorite-apk-${{ github.run_number }}" MeteoriteAtlas.apk \
+            --target "${{ github.sha }}" --title "Meteorite Atlas APK #${{ github.run_number }}" \
+            --notes "Debug APK. Install on Android (allow unknown sources)."
