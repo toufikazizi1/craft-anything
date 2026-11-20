@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:label="Meteorite Atlas — أطلس النيازك"
         android:allowBackup="false"
