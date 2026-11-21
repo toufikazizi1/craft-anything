@@ -105,7 +105,7 @@ class MainActivity:AppCompatActivity() {
  private lateinit var hud:TextView
  private lateinit var rulerFab:TextView
  private var compass:CompassOverlay?=null
- private var waypoints=ArrayList<Waypoint>()
+ private var waypoints:MutableList<Waypoint> = ArrayList()
  private var navTarget:GeoPoint?=null
  private var navName=""
  private var rulerOn=false
