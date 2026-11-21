@@ -28,6 +28,25 @@ class RouteOverlay(
  var rulerMode=false
  var navTarget:GeoPoint?=null
  var myPos:GeoPoint?=null
+ var recTrack:List<GeoPoint> = emptyList()
+ var savedTracks:List<List<GeoPoint>> = emptyList()
+ private val tpath=Path()
+ private fun drawTrack(c:Canvas,pts:List<GeoPoint>,proj:org.osmdroid.views.Projection,color:Int){
+  if(pts.size<2)return
+  tpath.reset()
+  val step=maxOf(1,pts.size/2500)
+  val pt=Point()
+  var i=0
+  while(i<pts.size){
+   proj.toPixels(pts[i],pt)
+   if(i==0)tpath.moveTo(pt.x.toFloat(),pt.y.toFloat()) else tpath.lineTo(pt.x.toFloat(),pt.y.toFloat())
+   i+=step
+  }
+  proj.toPixels(pts[pts.size-1],pt);tpath.lineTo(pt.x.toFloat(),pt.y.toFloat())
+  line.pathEffect=null
+  line.color=Color.BLACK;line.strokeWidth=7f*d;c.drawPath(tpath,line)
+  line.color=color;line.strokeWidth=4f*d;c.drawPath(tpath,line)
+ }
 
  private val line=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE;strokeCap=Paint.Cap.ROUND}
  private val fill=Paint(Paint.ANTI_ALIAS_FLAG)
@@ -95,6 +114,9 @@ class RouteOverlay(
    segment(c,a,b,Color.rgb(0,229,255),true,Geo.fmtDist(Geo.dist(me.latitude,me.longitude,t.latitude,t.longitude)),true)
   }
   if(t!=null){val b=px(t,proj);fill.style=Paint.Style.STROKE;fill.strokeWidth=4f*d;fill.color=Color.rgb(0,229,255);c.drawCircle(b[0],b[1],14*d,fill);fill.style=Paint.Style.FILL}
+  // tracks
+  for(tr in savedTracks)drawTrack(c,tr,proj,Color.rgb(171,71,188))
+  drawTrack(c,recTrack,proj,Color.rgb(255,64,129))
   // ruler: fixed vertices + one live arrow from the last vertex to the screen centre
   val rl=ruler
   for(i in 1 until rl.size){

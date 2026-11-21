@@ -29,6 +29,15 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
 import org.json.JSONObject
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import org.osmdroid.tileprovider.modules.OfflineTileProvider
+import org.osmdroid.tileprovider.tilesource.FileBasedTileSource
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
@@ -95,7 +104,7 @@ class MainActivity:AppCompatActivity() {
  private var fireballEvents=emptyList<FireballEvent>()
  private val fireballCache by lazy { File(filesDir,"nasa_fireballs_cache.json") }
  private var offline=false
- private val styles=listOf("هجين: أقمار صناعية + أسماء الولايات والطرق (موصى به)","خريطة الطرق (OpenStreetMap)","أقمار صناعية فقط","تضاريس")
+ private val styles=listOf("هجين: أقمار Esri + أسماء الولايات والطرق (موصى به)","خريطة الطرق (OpenStreetMap)","أقمار Esri فقط","تضاريس + خطوط ارتفاع (OpenTopoMap)","أقمار Sentinel-2 مجانية + أسماء","أقمار Esri Clarity + أسماء (أوضح أحياناً)","ظلال التضاريس Esri + أسماء","خريطة MBTiles مستوردة (بدون إنترنت)")
  private val labelOverlays=ArrayList<TilesOverlay>()
  private var myLoc:MyLocationNewOverlay?=null
  private val pages=ArrayList<View>()
@@ -109,6 +118,29 @@ class MainActivity:AppCompatActivity() {
  private lateinit var navRow:LinearLayout
  private lateinit var places:PlacesOverlay
  private var ticks=0
+ private lateinit var recFab:TextView
+ private lateinit var navArrow:TextView
+ private lateinit var nearBtn:Button
+ private var pendingLoc:(()->Unit)?=null
+ private var recSize=-1L
+ private var recPts:List<TrackPt> = emptyList()
+ private val shownTracks=HashSet<String>()
+ private var heading=0f
+ private var navBearing=0f
+ private var usingMbtiles=false
+ private val sm by lazy{getSystemService(Context.SENSOR_SERVICE) as SensorManager}
+ private val sensorL=object:SensorEventListener{
+  override fun onSensorChanged(e:SensorEvent){
+   try{
+    val r=FloatArray(9);SensorManager.getRotationMatrixFromVector(r,e.values);val o=FloatArray(3);SensorManager.getOrientation(r,o)
+    val az=((Math.toDegrees(o[0].toDouble())+360.0)%360.0).toFloat()
+    var diff=az-heading;while(diff>180f)diff-=360f;while(diff<-180f)diff+=360f
+    heading=(heading+diff*0.25f+360f)%360f
+    if(navTarget!=null)navArrow.rotation=((navBearing-heading)+360f)%360f
+   }catch(_:Exception){}
+  }
+  override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int){}
+ }
  private val placesFile by lazy { File(filesDir,"places.tsv") }
  private lateinit var rulerFab:TextView
  private var compass:CompassOverlay?=null
@@ -120,6 +152,10 @@ class MainActivity:AppCompatActivity() {
  private val ui=Handler(Looper.getMainLooper())
  private val tick=object:Runnable{override fun run(){
   try{routeOv.myPos=myLoc?.myLocation;updateHud();if(navTarget!=null)map.invalidate()}catch(_:Exception){}
+  try{
+   if(prefs.getBoolean("rec_on",false)){val f=File(filesDir,"track_current.csv");if(f.exists()&&f.length()!=recSize){recSize=f.length();recPts=Gpx.readCsv(f);routeOv.recTrack=recPts.map{GeoPoint(it.lat,it.lon)};map.invalidate()}}
+   if(ticks%2==0)updateCoord()
+  }catch(_:Exception){}
   ticks++;if(ticks==2||ticks%400==0)refreshFireballs(true)
   ui.postDelayed(this,1500)
  }}
@@ -161,12 +197,14 @@ class MainActivity:AppCompatActivity() {
    override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();updateHud();return false}
    override fun onZoom(event:ZoomEvent?):Boolean{updateCoord();updateHud();return false}
   })
-  setMapStyle(prefs.getInt("style2",0).coerceIn(0,3))
+  setMapStyle(prefs.getInt("style2",0).coerceIn(0,7))
   styleReady=true
   map.controller.setZoom(4.8);map.controller.setCenter(GeoPoint(28.0,2.5))
   try{if(fireballCache.exists()){fireballEvents=parseFireballs(fireballCache.readText(Charsets.UTF_8));points.fires=fireballEvents;refreshFireList()}}catch(_:Exception){}
   showPage(0)
   updateCoord()
+  if(prefs.getBoolean("rec_on",false)){recFab.background=round(Color.rgb(198,40,40))}
+  if(prefs.getBoolean("rec_on",false)||prefs.getBoolean("near_on",false))syncService()
   ui.postDelayed(tick,1500)
   load(false)
  }
@@ -203,6 +241,7 @@ class MainActivity:AppCompatActivity() {
   fab("🇩🇿",1){map.setMapOrientation(0f);map.controller.setZoom(4.8);map.controller.animateTo(GeoPoint(28.0,2.5))}
   fab("➕",2){addWaypointMenu()}
   rulerFab=fab("📏",3){toggleRuler()}
+  recFab=fab("⏺",5){toggleRecording()}
   fab("⬆N",4){map.setMapOrientation(0f);say("الشمال إلى الأعلى. لتدوير الخريطة: لفّ إصبعين عليها.")}
   hud=TextView(this).apply{textSize=13f;setTextColor(Color.WHITE);setPadding(dp(6),dp(4),dp(6),dp(2))}
   fun chip(t:String,f:()->Unit)=TextView(this).apply{text=t;textSize=12f;setTextColor(Color.WHITE);gravity=Gravity.CENTER;setPadding(dp(6),dp(9),dp(6),dp(9));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(255,0,60,70));setStroke(dp(1),Color.WHITE)};setOnClickListener{f()}}
@@ -213,13 +252,13 @@ class MainActivity:AppCompatActivity() {
   rulerRow.addView(chip("↩ تراجع"){rulerUndo()},cp())
   rulerRow.addView(chip("✖ إنهاء ومسح"){toggleRuler()},cp())
   navRow=LinearLayout(this).apply{orientation=0;visibility=View.GONE}
+  navArrow=TextView(this).apply{text="⬆";textSize=30f;setTextColor(Color.WHITE);gravity=Gravity.CENTER}
+  navRow.addView(navArrow,LinearLayout.LayoutParams(dp(46),dp(46)))
   navRow.addView(chip("⛔ إيقاف التوجيه"){navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()},cp())
   hudBox=LinearLayout(this).apply{orientation=1;visibility=View.GONE;setPadding(dp(8),dp(4),dp(8),dp(8));background=GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(238,0,96,110))}}
   hudBox.addView(hud);hudBox.addView(rulerRow);hudBox.addView(navRow)
   mapPage.addView(hudBox,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(56),dp(12),0)})
-  coordChip=TextView(this).apply{textSize=11f;setTextColor(Color.WHITE);setPadding(dp(10),dp(5),dp(10),dp(5));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,16,35,45))};setOnClickListener{
-   val c=map.mapCenter;val t=Geo.dec(c.latitude,c.longitude)
-   (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("coords",t));say("نُسخت الإحداثيات: $t")}}
+  coordChip=TextView(this).apply{textSize=11f;setTextColor(Color.WHITE);setPadding(dp(10),dp(5),dp(10),dp(5));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,16,35,45))};setOnClickListener{coordMenu()}}
   mapPage.addView(coordChip,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.START).apply{setMargins(dp(10),0,0,dp(10))})
   content.addView(mapPage,FrameLayout.LayoutParams(-1,-1));pages.add(mapPage)
 
@@ -272,6 +311,17 @@ class MainActivity:AppCompatActivity() {
   dlInfo=note("");p3.addView(dlInfo)
   p3.addView(btn("🔄 إعادة تحميل قاعدة النيازك المحلية"){load(true)},lp(dp(48)))
   p3.addView(btn("📥 استيراد CSV من Meteoritical Bulletin"){val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="text/*"};startActivityForResult(i,4102)},lp(dp(48)))
+  p3.addView(note("— المسارات والعلامات —"))
+  p3.addView(btn("🥾 مساراتي المحفوظة"){showTracks()},lp(dp(48)))
+  p3.addView(btn("📤 تصدير العلامات والمسارات (GPX)"){exportGpx()},lp(dp(48)))
+  p3.addView(btn("📥 استيراد ملف GPX"){importGpx()},lp(dp(48)))
+  nearBtn=btn(""){toggleNear()};p3.addView(nearBtn,lp(dp(48)));updateNearBtn()
+  p3.addView(note("مسافة تنبيه الاقتراب"))
+  val radii=intArrayOf(100,300,500,1000,2000)
+  val radiusSp=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("100 م","300 م","500 م","1 كم","2 كم"));setBackgroundColor(Color.rgb(220,230,235));setSelection(radii.indexOf(prefs.getInt("near_radius",300)).coerceAtLeast(0))}
+  radiusSp.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){prefs.edit().putInt("near_radius",radii[pos]).apply()}}
+  p3.addView(radiusSp,lp(dp(46)))
+  p3.addView(btn("🗺 استيراد خريطة MBTiles (بدون إنترنت)"){importMbtiles()},lp(dp(48)))
   p3.addView(note("• النقاط تعمل بدون إنترنت (محفوظة في التطبيق).\n• الخريطة تُخزَّن مؤقتاً أثناء تصفحها؛ تصفّح المنطقة وأنت متصل لتبقى متاحة بعدها.\n• GPS يعمل بدون إنترنت.\n• التنبيهات والرادار يحتاجان إنترنت.\n\nالمصادر: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © OpenStreetMap contributors • © Esri • OpenTopoMap"))
   sv.addView(p3,FrameLayout.LayoutParams(-1,-2))
   content.addView(sv,FrameLayout.LayoutParams(-1,-1));pages.add(sv)
@@ -288,7 +338,7 @@ class MainActivity:AppCompatActivity() {
 
   query.setOnEditorActionListener{_,a,_->if(a==EditorInfo.IME_ACTION_SEARCH){applyFilter();true}else false}
   fallFilter.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){if(data.isNotEmpty())applyFilter()}}
-  mapStyle.setSelection(prefs.getInt("style2",0).coerceIn(0,3))
+  mapStyle.setSelection(prefs.getInt("style2",0).coerceIn(0,7))
   mapStyle.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){if(styleReady)setMapStyle(pos)}}
  }
 
@@ -312,6 +362,7 @@ class MainActivity:AppCompatActivity() {
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray){
   super.onRequestPermissionsResult(requestCode,permissions,grantResults)
   if(requestCode==5002){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})startAlerts() else say("صلاحية الإشعارات مرفوضة، فلن تصلك التنبيهات.")}
+  if(requestCode==5010){val a=pendingLoc;pendingLoc=null;if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED)a?.invoke() else say("صلاحية الموقع مرفوضة.")}
   if(requestCode==5003){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})locate(false)}
   if(requestCode==5001){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})locate(true) else say("صلاحية الموقع مرفوضة. فعّلها من إعدادات التطبيق.")}
  }
@@ -432,10 +483,109 @@ class MainActivity:AppCompatActivity() {
    }
   }
  }
+ private fun coordMenu(){
+  val c=map.mapCenter;val lat=c.latitude;val lon=c.longitude
+  AlertDialog.Builder(this).setTitle(Geo.dec(lat,lon)).setItems(arrayOf("📋 نسخ الإحداثيات","⛰ ارتفاع هذه النقطة (يحتاج إنترنت)","📌 وضع علامة هنا")){_,i->
+   when(i){
+    0->{val t=Geo.dec(lat,lon);(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("coords",t));say("نُسخت: $t")}
+    1->{say("جارٍ جلب الارتفاع…");worker.execute{try{
+      val e=JSONObject(get("https://api.open-meteo.com/v1/elevation?latitude=$lat&longitude=$lon")).getJSONArray("elevation").getDouble(0)
+      runOnUiThread{AlertDialog.Builder(this).setTitle("⛰ الارتفاع").setMessage("${e.toInt()} م فوق سطح البحر\n(نموذج ارتفاع رقمي بدقة ~90 م)\n\n${Geo.full(lat,lon)}").setPositiveButton("حسناً",null).show()}
+     }catch(ex:Exception){runOnUiThread{say("تعذر جلب الارتفاع: ${ex.message}")}}}}
+    else->editWaypoint(null,lat,lon)
+   }
+  }.setNegativeButton("إغلاق",null).show()
+ }
+ private fun needLoc(a:()->Unit){
+  if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){a();return}
+  pendingLoc=a
+  val perms=ArrayList<String>();perms.add(Manifest.permission.ACCESS_FINE_LOCATION);perms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+  if(Build.VERSION.SDK_INT>=33)perms.add(Manifest.permission.POST_NOTIFICATIONS)
+  requestPermissions(perms.toTypedArray(),5010)
+ }
+ private fun syncService(){
+  val need=prefs.getBoolean("rec_on",false)||prefs.getBoolean("near_on",false)
+  val i=Intent(this,TrackService::class.java)
+  try{if(need){if(Build.VERSION.SDK_INT>=26)startForegroundService(i) else startService(i)}else stopService(i)}catch(e:Exception){say("تعذر تشغيل خدمة GPS: ${e.message}")}
+ }
+ private fun toggleRecording(){
+  if(prefs.getBoolean("rec_on",false)){stopRecording();return}
+  needLoc{
+   try{File(filesDir,"track_current.csv").delete()}catch(_:Exception){}
+   recSize=-1L;recPts=emptyList();routeOv.recTrack=emptyList()
+   prefs.edit().putBoolean("rec_on",true).apply();syncService();locate(false)
+   recFab.background=round(Color.rgb(198,40,40))
+   say("بدأ تسجيل المسار (يستمر والشاشة مطفأة). اضغط ⏺ مرة أخرى للإيقاف والحفظ.")
+  }
+ }
+ private fun stopRecording(){
+  prefs.edit().putBoolean("rec_on",false).apply();syncService()
+  recFab.background=round(Color.argb(235,16,35,45))
+  val f=File(filesDir,"track_current.csv");val pts=Gpx.readCsv(f)
+  routeOv.recTrack=emptyList();recSize=-1L
+  if(pts.size>=2){
+   val dir=File(filesDir,"tracks");dir.mkdirs()
+   val name="track_"+SimpleDateFormat("yyyyMMdd_HHmm",Locale.US).format(Date())+".csv"
+   Gpx.writeCsv(File(dir,name),pts);f.delete()
+   say("حُفظ المسار: ${Geo.fmtDist(Gpx.length(pts))} • صعود ${Gpx.ascent(pts).toInt()} م. تجده في الإعدادات ← مساراتي.")
+  }else{f.delete();say("المسار قصير جداً فلم يُحفظ.")}
+  updateHud();map.invalidate()
+ }
+ private fun tracksDir()=File(filesDir,"tracks").apply{mkdirs()}
+ private fun syncTracksOnMap(){
+  routeOv.savedTracks=shownTracks.mapNotNull{n->val f=File(tracksDir(),n);if(f.exists())Gpx.readCsv(f).map{GeoPoint(it.lat,it.lon)} else null}
+  map.invalidate()
+ }
+ private fun showTracks(){
+  val fs=(tracksDir().listFiles()?.filter{it.name.endsWith(".csv")}?:emptyList()).sortedByDescending{it.name}
+  if(fs.isEmpty()){AlertDialog.Builder(this).setTitle("🥾 مساراتي").setMessage("لا توجد مسارات محفوظة. اضغط زر ⏺ على الخريطة لتسجيل مسار.").setPositiveButton("حسناً",null).show();return}
+  val labels=fs.map{f->val p=Gpx.readCsv(f);(if(f.name in shownTracks)"👁 " else "")+f.name.removeSuffix(".csv").removePrefix("track_")+" — "+Geo.fmtDist(Gpx.length(p))+" • ↑"+Gpx.ascent(p).toInt()+" م"}.toTypedArray()
+  AlertDialog.Builder(this).setTitle("🥾 مساراتي (${fs.size})").setItems(labels){_,i->
+   val f=fs[i];val on=f.name in shownTracks
+   AlertDialog.Builder(this).setTitle(f.name.removeSuffix(".csv")).setItems(arrayOf(if(on)"إخفاء من الخريطة" else "عرض على الخريطة","🗑 حذف المسار")){_,k->
+    if(k==0){
+     if(on)shownTracks.remove(f.name) else {shownTracks.add(f.name);val p=Gpx.readCsv(f);if(p.isNotEmpty()){goTo(p[0].lat,p[0].lon,13.0)}}
+     syncTracksOnMap();showPage(0)
+    }else{f.delete();shownTracks.remove(f.name);syncTracksOnMap();say("تم حذف المسار.")}
+   }.setNegativeButton("إغلاق",null).show()
+  }.setNegativeButton("إغلاق",null).show()
+ }
+ private fun toggleNear(){
+  if(prefs.getBoolean("near_on",false)){prefs.edit().putBoolean("near_on",false).apply();syncService();updateNearBtn();say("أُوقف تنبيه الاقتراب.");return}
+  needLoc{prefs.edit().putBoolean("near_on",true).apply();syncService();updateNearBtn();say("تنبيه الاقتراب مفعّل: يهتز الهاتف ويُشعرك عند الاقتراب من علامة أو نيزك أو بئر (يعمل في الخلفية).")}
+ }
+ private fun updateNearBtn(){nearBtn.text=if(prefs.getBoolean("near_on",false))"🔔 تنبيه الاقتراب: مفعّل (اضغط للإيقاف)" else "🔕 تنبيه الاقتراب: متوقف (اضغط للتفعيل)"}
+ private fun exportGpx(){
+  val i=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/gpx+xml";putExtra(Intent.EXTRA_TITLE,"meteorite_atlas.gpx")}
+  startActivityForResult(i,4201)
+ }
+ private fun importGpx(){
+  val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="*/*"}
+  startActivityForResult(i,4202)
+ }
+ private fun importMbtiles(){
+  val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="*/*"}
+  startActivityForResult(i,4203)
+ }
+ private fun applyMbtiles():Boolean{
+  val path=prefs.getString("mbtiles",null)?:return false
+  val f=File(path);if(!f.exists())return false
+  return try{
+   val prov=OfflineTileProvider(SimpleRegisterReceiver(this),arrayOf(f))
+   map.setTileProvider(prov);usingMbtiles=true
+   var ok=false
+   val arch=prov.archives
+   if(arch.isNotEmpty()){val ts=arch[0].tileSources;if(ts.isNotEmpty()){map.setTileSource(FileBasedTileSource.getSource(ts.iterator().next()));ok=true}}
+   if(!ok)map.setTileSource(TileSourceFactory.DEFAULT_TILE_SOURCE)
+   map.setUseDataConnection(false);true
+  }catch(e:Exception){false}
+ }
  private fun updateCoord(){
   if(!::coordChip.isInitialized)return
   val c=map.mapCenter
-  coordChip.text="✛ "+Geo.dec(c.latitude,c.longitude)+"\n"+Geo.dms(c.latitude,c.longitude)
+  var gps=""
+  try{val fx=myLoc?.lastFix;if(fx!=null)gps="\nGPS: ±${fx.accuracy.toInt()} م"+(if(fx.hasAltitude())" • ارتفاع ${fx.altitude.toInt()} م" else "")}catch(_:Exception){}
+  coordChip.text="✛ "+Geo.dec(c.latitude,c.longitude)+"\n"+Geo.dms(c.latitude,c.longitude)+gps
  }
  private fun saveWps(){WpStore.save(prefs,waypoints);routeOv.wps=ArrayList(waypoints);map.invalidate()}
  private fun setNav(lat:Double,lon:Double,name:String){
@@ -468,6 +618,7 @@ class MainActivity:AppCompatActivity() {
    val me=myLoc?.myLocation
    val fLat=me?.latitude?:map.mapCenter.latitude;val fLon=me?.longitude?:map.mapCenter.longitude
    val dm=Geo.dist(fLat,fLon,t.latitude,t.longitude);val br=Geo.bearing(fLat,fLon,t.latitude,t.longitude)
+   navBearing=br.toFloat();navArrow.rotation=((navBearing-heading)+360f)%360f
    lines.add("🧭 $navName: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}"+(if(me==null)"\n(من مركز الشاشة — شغّل GPS بزر 📍)" else ""))
   }
   if(rulerOn&&rulerPts.isNotEmpty()){
@@ -477,6 +628,7 @@ class MainActivity:AppCompatActivity() {
    val dm=Geo.dist(l.latitude,l.longitude,c.latitude,c.longitude);val br=Geo.bearing(l.latitude,l.longitude,c.latitude,c.longitude)
    lines.add("📏 من النقطة ${if(rulerPts.size==1)"A" else ('A'+rulerPts.size-1).toString()}: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}\nالمجموع مع المثبّت: ${Geo.fmtDist(total+dm)}")
   }
+  if(prefs.getBoolean("rec_on",false))lines.add("⏺ تسجيل المسار: ${Geo.fmtDist(Gpx.length(recPts))} • ${recPts.size} نقطة • صعود ${Gpx.ascent(recPts).toInt()} م")
   hudBox.visibility=if(lines.isEmpty())View.GONE else View.VISIBLE
   hud.text=lines.joinToString("\n")
   rulerRow.visibility=if(rulerOn)View.VISIBLE else View.GONE
@@ -541,26 +693,36 @@ class MainActivity:AppCompatActivity() {
   ov.setLoadingBackgroundColor(Color.TRANSPARENT);ov.setLoadingLineColor(Color.TRANSPARENT)
   return ov
  }
- private fun setMapStyle(i:Int){
+ private fun xyz(name:String,maxZ:Int,ext:String,prefix:String,suffix:String)=object:OnlineTileSourceBase(name,0,maxZ,256,ext,arrayOf(prefix)){
+  override fun getTileURLString(tile:Long):String{val z=MapTileIndex.getZoom(tile);val x=MapTileIndex.getX(tile);val y=MapTileIndex.getY(tile);return "$prefix$z/$y/$x$suffix"}
+ }
+ private fun addEsriLabels(){
+  val places=labelLayer(esri("Esri Boundaries Places","Reference/World_Boundaries_and_Places",".png"))
+  val roads=labelLayer(esri("Esri Transportation","Reference/World_Transportation",".png"))
+  map.overlays.add(0,roads);map.overlays.add(1,places)
+  labelOverlays.add(roads);labelOverlays.add(places)
+ }
+ private fun setMapStyle(i0:Int){
   if(!::map.isInitialized)return
+  var i=i0
   labelOverlays.forEach{map.overlays.remove(it)};labelOverlays.clear()
-  val imagery=esri("Esri World Imagery","World_Imagery",".jpg")
+  if(i==7){
+   if(!applyMbtiles()){say("لم تستورد ملف MBTiles بعد. استورده من الإعدادات.");i=0}
+  }
+  if(i!=7&&usingMbtiles){map.setTileProvider(MapTileProviderBasic(applicationContext));usingMbtiles=false;map.setUseDataConnection(!offline)}
   when(i){
-   0->{
-    map.setTileSource(imagery)
-    val places=labelLayer(esri("Esri Boundaries Places","Reference/World_Boundaries_and_Places",".png"))
-    val roads=labelLayer(esri("Esri Transportation","Reference/World_Transportation",".png"))
-    map.overlays.add(0,roads);map.overlays.add(1,places)
-    labelOverlays.add(roads);labelOverlays.add(places)
-   }
-   2->map.setTileSource(imagery)
+   0->{map.setTileSource(esri("Esri World Imagery","World_Imagery",".jpg"));addEsriLabels()}
+   1->map.setTileSource(TileSourceFactory.MAPNIK)
+   2->map.setTileSource(esri("Esri World Imagery","World_Imagery",".jpg"))
    3->map.setTileSource(XYTileSource("OpenTopoMap",0,17,256,".png",arrayOf("https://a.tile.opentopomap.org/","https://b.tile.opentopomap.org/","https://c.tile.opentopomap.org/")))
-   else->map.setTileSource(TileSourceFactory.MAPNIK)
+   4->{map.setTileSource(xyz("EOX Sentinel-2 2021",13,".jpg","https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/",".jpg"));addEsriLabels()}
+   5->{map.setTileSource(xyz("Esri Clarity",17,".jpg","https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/",""));addEsriLabels()}
+   6->{map.setTileSource(esri("Esri Hillshade","Elevation/World_Hillshade",".jpg"));addEsriLabels()}
+   else->{}
   }
   try{map.overlayManager.tilesOverlay.apply{setLoadingBackgroundColor(Color.rgb(22,34,42));setLoadingLineColor(Color.rgb(40,58,68))}}catch(_:Exception){}
   prefs.edit().putInt("style2",i).apply();map.invalidate()
  }
-
  private fun load(force:Boolean){
   worker.execute{try{
    val base=assets.open("meteorites.csv").bufferedReader(Charsets.UTF_8).use{it.readText()}
@@ -709,6 +871,30 @@ class MainActivity:AppCompatActivity() {
  @Deprecated("Deprecated in Android API; retained for broad device compatibility")
  override fun onActivityResult(requestCode:Int,resultCode:Int,result:Intent?){
   super.onActivityResult(requestCode,resultCode,result);if(resultCode!=RESULT_OK)return;val uri=result?.data?:return
+  if(requestCode==4201){worker.execute{try{
+   val tr=(tracksDir().listFiles()?.filter{it.name.endsWith(".csv")}?:emptyList()).sortedBy{it.name}.map{Pair(it.name.removeSuffix(".csv"),Gpx.readCsv(it))}
+   val text=Gpx.build(waypoints,tr)
+   contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray(Charsets.UTF_8))}?:throw Exception("تعذر الكتابة")
+   runOnUiThread{say("تم التصدير: ${waypoints.size} علامة و${tr.size} مسار.")}
+  }catch(e:Exception){runOnUiThread{say("فشل التصدير: ${e.message}")}}};return}
+  if(requestCode==4202){worker.execute{try{
+   val raw=contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:throw Exception("تعذر فتح الملف")
+   val (w,t)=Gpx.parse(raw)
+   var addedW=0
+   runOnUiThread{
+    for(x in w){if(waypoints.none{it.name==x.name&&Geo.dist(it.lat,it.lon,x.lat,x.lon)<2.0}){waypoints.add(x);addedW++}}
+    saveWps()
+   }
+   var k=0
+   for((name,pts) in t){k++;Gpx.writeCsv(File(tracksDir(),"track_gpx_"+System.currentTimeMillis()+"_"+k+".csv"),pts)}
+   runOnUiThread{say("تم الاستيراد: ${w.size} علامة و${t.size} مسار.")}
+  }catch(e:Exception){runOnUiThread{say("فشل الاستيراد: ${e.message}")}}};return}
+  if(requestCode==4203){say("جارٍ نسخ الخريطة…");worker.execute{try{
+   val dst=File(filesDir,"offline_map.mbtiles")
+   contentResolver.openInputStream(uri)?.use{i->dst.outputStream().use{o->i.copyTo(o)}}?:throw Exception("تعذر فتح الملف")
+   prefs.edit().putString("mbtiles",dst.absolutePath).apply()
+   runOnUiThread{say("تم استيراد الخريطة.");mapStyle.setSelection(7);setMapStyle(7)}
+  }catch(e:Exception){runOnUiThread{say("فشل استيراد الخريطة: ${e.message}")}}};return}
   if(requestCode==4102){say("جارٍ فحص واستيراد CSV…");worker.execute{try{
    val raw=contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:throw Exception("تعذر فتح الملف")
    val parsed=parseCsv(raw);if(parsed.isEmpty())throw Exception("لم أجد نيازك جزائرية بإحداثيات في الملف؛ لم تُستبدل القاعدة.")
@@ -716,8 +902,8 @@ class MainActivity:AppCompatActivity() {
    localDb.replaceAll(parsed);runOnUiThread{data=parsed;applyFilter();say("تم استيراد ${parsed.size} سجل.")}
   }catch(e:Exception){runOnUiThread{say("فشل الاستيراد: ${e.message}")}}}}
  }
- override fun onResume(){super.onResume();if(::map.isInitialized)map.onResume();myLoc?.enableMyLocation();try{compass?.enableCompass()}catch(_:Exception){}}
- override fun onPause(){myLoc?.disableMyLocation();try{compass?.disableCompass()}catch(_:Exception){};if(::map.isInitialized)map.onPause();super.onPause()}
+ override fun onResume(){super.onResume();if(::map.isInitialized)map.onResume();myLoc?.enableMyLocation();try{compass?.enableCompass()}catch(_:Exception){};try{sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let{sm.registerListener(sensorL,it,SensorManager.SENSOR_DELAY_UI)}}catch(_:Exception){}}
+ override fun onPause(){try{sm.unregisterListener(sensorL)}catch(_:Exception){};myLoc?.disableMyLocation();try{compass?.disableCompass()}catch(_:Exception){};if(::map.isInitialized)map.onPause();super.onPause()}
  override fun onDestroy(){ui.removeCallbacks(tick);worker.shutdownNow();if(::map.isInitialized)map.onDetach();super.onDestroy()}
 }
 
