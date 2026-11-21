@@ -11,6 +11,11 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -36,6 +41,12 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.TilesOverlay
+import org.osmdroid.views.overlay.ScaleBarOverlay
+import org.osmdroid.views.overlay.compass.CompassOverlay
+import org.osmdroid.views.overlay.compass.InternalCompassOrientationProvider
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.io.File
@@ -89,6 +100,21 @@ class MainActivity:AppCompatActivity() {
  private val pages=ArrayList<View>()
  private val tabs=ArrayList<TextView>()
  private var styleReady=false
+ private lateinit var routeOv:RouteOverlay
+ private lateinit var coordChip:TextView
+ private lateinit var hud:TextView
+ private lateinit var rulerFab:TextView
+ private var compass:CompassOverlay?=null
+ private var waypoints=ArrayList<Waypoint>()
+ private var navTarget:GeoPoint?=null
+ private var navName=""
+ private var rulerOn=false
+ private val rulerPts=ArrayList<GeoPoint>()
+ private val ui=Handler(Looper.getMainLooper())
+ private val tick=object:Runnable{override fun run(){
+  try{routeOv.myPos=myLoc?.myLocation;updateHud();if(navTarget!=null)map.invalidate()}catch(_:Exception){}
+  ui.postDelayed(this,1500)
+ }}
 
  override fun onCreate(savedInstanceState:Bundle?) {
   super.onCreate(savedInstanceState)
@@ -111,11 +137,25 @@ class MainActivity:AppCompatActivity() {
   makeUi()
   points=PointsOverlay(this,{m->showMeteorite(m)},{g,c->onGroupTap(g,c)},{e->showFireball(e)})
   map.overlays.add(points)
+  waypoints=WpStore.load(prefs)
+  routeOv=RouteOverlay(this,{w->showWaypoint(w)},{g->editWaypoint(null,g.latitude,g.longitude)},{g->rulerAdd(g)})
+  routeOv.wps=ArrayList(waypoints)
+  map.overlays.add(routeOv)
+  try{
+   val sb=ScaleBarOverlay(map);sb.setAlignBottom(true);sb.setScaleBarOffset(dp(12),dp(64));sb.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric);map.overlays.add(sb)
+   val cp=CompassOverlay(this,InternalCompassOrientationProvider(this),map);cp.setCompassCenter(34f,150f);cp.enableCompass();compass=cp;map.overlays.add(cp)
+  }catch(_:Exception){}
+  map.addMapListener(object:MapListener{
+   override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();return false}
+   override fun onZoom(event:ZoomEvent?):Boolean{updateCoord();return false}
+  })
   setMapStyle(prefs.getInt("style2",0).coerceIn(0,3))
   styleReady=true
   map.controller.setZoom(4.8);map.controller.setCenter(GeoPoint(28.0,2.5))
   try{if(fireballCache.exists()){fireballEvents=parseFireballs(fireballCache.readText(Charsets.UTF_8));points.fires=fireballEvents;refreshFireList()}}catch(_:Exception){}
   showPage(0)
+  updateCoord()
+  ui.postDelayed(tick,1500)
   load(false)
  }
 
@@ -142,12 +182,21 @@ class MainActivity:AppCompatActivity() {
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
   countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
   mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
-  fun fab(t:String,k:Int,f:()->Unit){
+  fun fab(t:String,k:Int,f:()->Unit):TextView{
    val v=TextView(this).apply{text=t;textSize=22f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=round(Color.argb(235,16,35,45));setOnClickListener{f()}}
    mapPage.addView(v,FrameLayout.LayoutParams(dp(52),dp(52),Gravity.BOTTOM or Gravity.END).apply{setMargins(0,0,dp(14),dp(90+k*62))})
+   return v
   }
-  fab("📍",0){locate()}
+  fab("📍",0){locate(true)}
   fab("🇩🇿",1){map.controller.setZoom(4.8);map.controller.animateTo(GeoPoint(28.0,2.5))}
+  fab("➕",2){addWaypointMenu()}
+  rulerFab=fab("📏",3){toggleRuler()}
+  hud=TextView(this).apply{textSize=13f;setTextColor(Color.WHITE);visibility=View.GONE;setPadding(dp(12),dp(8),dp(12),dp(8));background=GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(230,0,96,110))};setOnClickListener{hudMenu()}}
+  mapPage.addView(hud,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(56),dp(12),0)})
+  coordChip=TextView(this).apply{textSize=11f;setTextColor(Color.WHITE);setPadding(dp(10),dp(5),dp(10),dp(5));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,16,35,45))};setOnClickListener{
+   val c=map.mapCenter;val t=Geo.dec(c.latitude,c.longitude)
+   (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("coords",t));say("نُسخت الإحداثيات: $t")}}
+  mapPage.addView(coordChip,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.START).apply{setMargins(dp(10),0,0,dp(10))})
   content.addView(mapPage,FrameLayout.LayoutParams(-1,-1));pages.add(mapPage)
 
   // ---- Page 1: meteorite list / search ----
@@ -162,6 +211,7 @@ class MainActivity:AppCompatActivity() {
   row.addView(btn("إحصائيات"){showStats()},LinearLayout.LayoutParams(0,dp(46),1f))
   row.addView(btn("بلا موقع"){showNoLocation()},LinearLayout.LayoutParams(0,dp(46),1f))
   p1.addView(row)
+  p1.addView(btn("📌 علاماتي"){showWaypointList()},lp(dp(46)))
   listInfo=note("…");p1.addView(listInfo)
   metAdapter=darkAdapter()
   val metList=ListView(this).apply{adapter=metAdapter;setOnItemClickListener{_,_,i,_->listed.getOrNull(i)?.let{showMeteorite(it)}}}
@@ -227,17 +277,18 @@ class MainActivity:AppCompatActivity() {
   showGroup(g)
  }
 
- private fun locate(){
-  if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),5001);return}
+ private fun locate(follow:Boolean){
+  if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),if(follow)5001 else 5003);return}
   if(myLoc==null){val ov=MyLocationNewOverlay(GpsMyLocationProvider(this),map);myLoc=ov;map.overlays.add(ov)}
   val o=myLoc?:return
-  o.enableMyLocation();o.enableFollowLocation();say("جارٍ تحديد موقعك بالـGPS… تأكد أن الموقع مفعّل في الهاتف.")
-  o.runOnFirstFix{runOnUiThread{val p=o.myLocation;if(p!=null){map.controller.setZoom(13.0);map.controller.animateTo(p);say("تم تحديد موقعك.")}}}
+  o.enableMyLocation();if(follow)o.enableFollowLocation();if(follow)say("جارٍ تحديد موقعك بالـGPS… تأكد أن الموقع مفعّل في الهاتف.")
+  if(follow)o.runOnFirstFix{runOnUiThread{val p=o.myLocation;if(p!=null){map.controller.setZoom(13.0);map.controller.animateTo(p);say("تم تحديد موقعك.")}}}
  }
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray){
   super.onRequestPermissionsResult(requestCode,permissions,grantResults)
   if(requestCode==5002){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})startAlerts() else say("صلاحية الإشعارات مرفوضة، فلن تصلك التنبيهات.")}
-  if(requestCode==5001){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})locate() else say("صلاحية الموقع مرفوضة. فعّلها من إعدادات التطبيق.")}
+  if(requestCode==5003){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})locate(false)}
+  if(requestCode==5001){if(grantResults.any{it==PackageManager.PERMISSION_GRANTED})locate(true) else say("صلاحية الموقع مرفوضة. فعّلها من إعدادات التطبيق.")}
  }
  private fun showNoLocation(){
   worker.execute{try{
@@ -292,9 +343,104 @@ class MainActivity:AppCompatActivity() {
     next()
    }.setNegativeButton("إلغاء",null).show()
  }
+ private fun updateCoord(){
+  if(!::coordChip.isInitialized)return
+  val c=map.mapCenter
+  coordChip.text="✛ "+Geo.dec(c.latitude,c.longitude)+"\n"+Geo.dms(c.latitude,c.longitude)
+ }
+ private fun saveWps(){WpStore.save(prefs,waypoints);routeOv.wps=ArrayList(waypoints);map.invalidate()}
+ private fun setNav(lat:Double,lon:Double,name:String){
+  navTarget=GeoPoint(lat,lon);navName=name;routeOv.navTarget=navTarget
+  locate(false);showPage(0);updateHud();map.invalidate()
+  say("التوجيه إلى «$name»: يظهر سهم من موقعك إلى الهدف. فعّل الموقع (GPS).")
+ }
+ private fun toggleRuler(){
+  rulerOn=!rulerOn;routeOv.rulerMode=rulerOn
+  rulerFab.background=round(if(rulerOn)Color.rgb(198,40,40) else Color.argb(235,16,35,45))
+  if(rulerOn)say("المسطرة: اضغط على الخريطة (أو على علامة) لإضافة نقاط؛ تظهر المسافة والاتجاه بين كل نقطتين.")
+  updateHud()
+ }
+ private fun rulerAdd(g:GeoPoint){rulerPts.add(g);routeOv.ruler=ArrayList(rulerPts);updateHud();map.invalidate()}
+ private fun updateHud(){
+  if(!::hud.isInitialized)return
+  val lines=ArrayList<String>()
+  val t=navTarget
+  if(t!=null){
+   val me=myLoc?.myLocation
+   val fLat=me?.latitude?:map.mapCenter.latitude;val fLon=me?.longitude?:map.mapCenter.longitude
+   val dm=Geo.dist(fLat,fLon,t.latitude,t.longitude);val br=Geo.bearing(fLat,fLon,t.latitude,t.longitude)
+   lines.add("🧭 $navName: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}"+(if(me==null)"\n(من مركز الشاشة — شغّل GPS بزر 📍)" else ""))
+  }
+  if(rulerPts.isNotEmpty()||rulerOn){
+   var total=0.0
+   for(i in 1 until rulerPts.size)total+=Geo.dist(rulerPts[i-1].latitude,rulerPts[i-1].longitude,rulerPts[i].latitude,rulerPts[i].longitude)
+   lines.add("📏 المسافة الكلية: ${Geo.fmtDist(total)} • ${rulerPts.size} نقطة")
+  }
+  if(lines.isEmpty())hud.visibility=View.GONE else {hud.text=lines.joinToString("\n");hud.visibility=View.VISIBLE}
+ }
+ private fun hudMenu(){
+  val items=ArrayList<String>();val acts=ArrayList<()->Unit>()
+  if(navTarget!=null){items.add("⛔ إيقاف التوجيه");acts.add{navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()}}
+  if(rulerPts.isNotEmpty()){items.add("↩ حذف آخر نقطة");acts.add{rulerPts.removeAt(rulerPts.size-1);routeOv.ruler=ArrayList(rulerPts);updateHud();map.invalidate()}}
+  if(rulerPts.isNotEmpty()){items.add("🗑 مسح المسار");acts.add{rulerPts.clear();routeOv.ruler=emptyList();updateHud();map.invalidate()}}
+  val me=myLoc?.myLocation
+  if(me!=null){items.add("📍 إضافة موقعي كنقطة في المسار");acts.add{rulerAdd(GeoPoint(me.latitude,me.longitude))}}
+  if(rulerOn){items.add("✔ إنهاء المسطرة");acts.add{toggleRuler()}}
+  if(items.isEmpty())return
+  AlertDialog.Builder(this).setItems(items.toTypedArray()){_,i->acts[i]()}.setNegativeButton("إغلاق",null).show()
+ }
+ private fun addWaypointMenu(){
+  val items=arrayOf("📍 في موقعي الحالي (GPS)","✛ في مركز الشاشة","⌨ إدخال إحداثيات يدوياً")
+  AlertDialog.Builder(this).setTitle("إضافة علامة").setItems(items){_,i->
+   val me=myLoc?.myLocation;val c=map.mapCenter
+   when(i){
+    0->if(me!=null)editWaypoint(null,me.latitude,me.longitude) else {locate(false);say("لا يوجد تحديد GPS بعد. انتظر ثواني ثم أعد المحاولة.")}
+    else->editWaypoint(null,c.latitude,c.longitude)
+   }
+  }.setNegativeButton("إلغاء",null).show()
+  Toast.makeText(this,"نصيحة: اضغط مطولاً على أي مكان في الخريطة لوضع علامة هناك.",Toast.LENGTH_LONG).show()
+ }
+ private fun editWaypoint(w:Waypoint?,lat:Double,lon:Double){
+  val box=LinearLayout(this).apply{orientation=1;setPadding(dp(18),dp(8),dp(18),0)}
+  val num=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+  val name=EditText(this).apply{hint="اسم العلامة";setText(w?.name?:"علامة ${waypoints.size+1}")}
+  val note=EditText(this).apply{hint="ملاحظة (اختياري)";setText(w?.note?:"")}
+  val latE=EditText(this).apply{hint="خط العرض Lat";inputType=num;setText(String.format(Locale.US,"%.6f",w?.lat?:lat))}
+  val lonE=EditText(this).apply{hint="خط الطول Lon";inputType=num;setText(String.format(Locale.US,"%.6f",w?.lon?:lon))}
+  val iconSp=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,WpStore.ICONS.mapIndexed{i,e->"$e  ${WpStore.ICON_NAMES[i]}"});setSelection(w?.icon?:0)}
+  val colSp=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,WpStore.COLOR_NAMES);setSelection(w?.color?:0)}
+  box.addView(name);box.addView(note);box.addView(latE);box.addView(lonE)
+  box.addView(TextView(this).apply{text="الرمز";setPadding(0,dp(8),0,0)});box.addView(iconSp)
+  box.addView(TextView(this).apply{text="اللون";setPadding(0,dp(8),0,0)});box.addView(colSp)
+  val b=AlertDialog.Builder(this).setTitle(if(w==null)"علامة جديدة" else "تعديل العلامة").setView(ScrollView(this).apply{addView(box)})
+   .setPositiveButton("حفظ"){_,_->
+    val la=latE.text.toString().replace(',','.').toDoubleOrNull();val lo=lonE.text.toString().replace(',','.').toDoubleOrNull()
+    if(la==null||lo==null||la !in -90.0..90.0||lo !in -180.0..180.0){say("إحداثيات غير صالحة.");return@setPositiveButton}
+    val nm=name.text.toString().trim().ifBlank{"علامة"}
+    if(w==null)waypoints.add(Waypoint(System.currentTimeMillis(),nm,note.text.toString().trim(),la,lo,iconSp.selectedItemPosition,colSp.selectedItemPosition))
+    else{w.name=nm;w.note=note.text.toString().trim();w.lat=la;w.lon=lo;w.icon=iconSp.selectedItemPosition;w.color=colSp.selectedItemPosition}
+    saveWps();say("تم حفظ العلامة.")
+   }.setNegativeButton("إلغاء",null)
+  if(w!=null)b.setNeutralButton("🗑 حذف"){_,_->waypoints.remove(w);saveWps();say("تم الحذف.")}
+  b.show()
+ }
+ private fun showWaypoint(w:Waypoint){
+  val me=myLoc?.myLocation
+  val far=if(me!=null){val dm=Geo.dist(me.latitude,me.longitude,w.lat,w.lon);val br=Geo.bearing(me.latitude,me.longitude,w.lat,w.lon);"\nمنك: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}"} else ""
+  AlertDialog.Builder(this).setTitle("${WpStore.ICONS[w.icon.coerceIn(0,WpStore.ICONS.size-1)]} ${w.name}")
+   .setMessage((if(w.note.isNotBlank())w.note+"\n\n" else "")+Geo.full(w.lat,w.lon)+far)
+   .setPositiveButton("🧭 اتجه إليه"){_,_->setNav(w.lat,w.lon,w.name)}
+   .setNeutralButton("✏ تعديل"){_,_->editWaypoint(w,w.lat,w.lon)}
+   .setNegativeButton("إغلاق",null).show()
+ }
+ private fun showWaypointList(){
+  if(waypoints.isEmpty()){AlertDialog.Builder(this).setTitle("علاماتي").setMessage("لا توجد علامات. اضغط مطولاً على الخريطة أو زر ➕ لإضافة علامة.").setPositiveButton("حسناً"){_,_->showPage(0)}.show();return}
+  val labels=waypoints.map{"${WpStore.ICONS[it.icon.coerceIn(0,WpStore.ICONS.size-1)]} ${it.name} — ${String.format(Locale.US,"%.4f, %.4f",it.lat,it.lon)}"}.toTypedArray()
+  AlertDialog.Builder(this).setTitle("علاماتي (${waypoints.size})").setItems(labels){_,i->showWaypoint(waypoints[i])}.setNegativeButton("إغلاق",null).show()
+ }
  private fun updateOfflineButton(){offlineButton.text=if(offline)"● وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "● وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"}
 
- private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,19,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
+ private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,17,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
   override fun getTileURLString(tile:Long):String{val z=MapTileIndex.getZoom(tile);val x=MapTileIndex.getX(tile);val y=MapTileIndex.getY(tile);return "https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/$z/$y/$x"}
  }
  private fun labelLayer(src:OnlineTileSourceBase):TilesOverlay{
@@ -318,6 +464,7 @@ class MainActivity:AppCompatActivity() {
    3->map.setTileSource(XYTileSource("OpenTopoMap",0,17,256,".png",arrayOf("https://a.tile.opentopomap.org/","https://b.tile.opentopomap.org/","https://c.tile.opentopomap.org/")))
    else->map.setTileSource(TileSourceFactory.MAPNIK)
   }
+  try{map.overlayManager.tilesOverlay.apply{setLoadingBackgroundColor(Color.rgb(22,34,42));setLoadingLineColor(Color.rgb(40,58,68))}}catch(_:Exception){}
   prefs.edit().putInt("style2",i).apply();map.invalidate()
  }
 
@@ -442,8 +589,9 @@ class MainActivity:AppCompatActivity() {
  private fun showMeteorite(m:Meteorite){
   val fell=if(isFell(m))"سقط وشوهد (Fell)" else "عُثر عليه (Found)"
   AlertDialog.Builder(this).setTitle("☄ "+m.name.ifBlank{"نيزك بلا اسم"})
-   .setMessage("الاسم: ${m.name}\nالموقع: ${m.place.ifBlank{"غير محدد"}}\nالتصنيف: ${m.cls.ifBlank{"غير متاح"}}\nالسنة: ${m.year.ifBlank{"غير معروفة"}}\nالكتلة: ${m.mass.ifBlank{"غير متاحة"}} غرام\nالحالة: ${m.fall.ifBlank{fell}}\nخط العرض: ${m.lat}\nخط الطول: ${m.lon}\n\nالمصدر: Meteoritical Bulletin Database")
+   .setMessage("الاسم: ${m.name}\nالموقع: ${m.place.ifBlank{"غير محدد"}}\nالتصنيف: ${m.cls.ifBlank{"غير متاح"}}\nالسنة: ${m.year.ifBlank{"غير معروفة"}}\nالكتلة: ${m.mass.ifBlank{"غير متاحة"}} غرام\nالحالة: ${m.fall.ifBlank{fell}}\n\nالإحداثيات:\n${Geo.full(m.lat,m.lon)}\n\nالمصدر: Meteoritical Bulletin Database")
    .setPositiveButton("عرض على الخريطة"){_,_->goTo(m.lat,m.lon,12.0)}
+   .setNeutralButton("🧭 اتجه إليه"){_,_->setNav(m.lat,m.lon,m.name)}
    .setNegativeButton("إغلاق",null).show()
  }
  private fun showGroup(group:List<Meteorite>){
@@ -469,9 +617,9 @@ class MainActivity:AppCompatActivity() {
    localDb.replaceAll(parsed);runOnUiThread{data=parsed;applyFilter();say("تم استيراد ${parsed.size} سجل.")}
   }catch(e:Exception){runOnUiThread{say("فشل الاستيراد: ${e.message}")}}}}
  }
- override fun onResume(){super.onResume();if(::map.isInitialized)map.onResume();myLoc?.enableMyLocation()}
- override fun onPause(){myLoc?.disableMyLocation();if(::map.isInitialized)map.onPause();super.onPause()}
- override fun onDestroy(){worker.shutdownNow();if(::map.isInitialized)map.onDetach();super.onDestroy()}
+ override fun onResume(){super.onResume();if(::map.isInitialized)map.onResume();myLoc?.enableMyLocation();try{compass?.enableCompass()}catch(_:Exception){}}
+ override fun onPause(){myLoc?.disableMyLocation();try{compass?.disableCompass()}catch(_:Exception){};if(::map.isInitialized)map.onPause();super.onPause()}
+ override fun onDestroy(){ui.removeCallbacks(tick);worker.shutdownNow();if(::map.isInitialized)map.onDetach();super.onDestroy()}
 }
 
 private class MeteoriteDb(context:Context):SQLiteOpenHelper(context,"meteorite_atlas.db",null,1){
