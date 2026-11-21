@@ -52,7 +52,7 @@ class RouteOverlay(
   fill.color=Color.BLACK;fill.style=Paint.Style.STROKE;fill.strokeWidth=3f*d;c.drawPath(path,fill)
   fill.style=Paint.Style.FILL;fill.color=color;c.drawPath(path,fill)
  }
- private fun segment(c:Canvas,a:FloatArray,b:FloatArray,color:Int,dashed:Boolean,text:String?){
+ private fun segment(c:Canvas,a:FloatArray,b:FloatArray,color:Int,dashed:Boolean,text:String?,arrowEnd:Boolean=true){
   line.color=Color.BLACK;line.strokeWidth=7f*d;line.pathEffect=null
   c.drawLine(a[0],a[1],b[0],b[1],line)
   line.color=color;line.strokeWidth=4f*d
@@ -61,8 +61,7 @@ class RouteOverlay(
   line.pathEffect=null
   val ang=atan2((b[1]-a[1]).toDouble(),(b[0]-a[0]).toDouble())
   val mx=(a[0]+b[0])/2;val my=(a[1]+b[1])/2
-  arrowHead(c,mx+(8*d*cos(ang)).toFloat(),my+(8*d*sin(ang)).toFloat(),ang,color,16*d)
-  arrowHead(c,b[0],b[1],ang,color,16*d)
+  if(arrowEnd)arrowHead(c,b[0],b[1],ang,color,16*d)
   if(text!=null)label(c,text,mx,my-12*d,12f)
  }
  private fun badge(c:Canvas,x:Float,y:Float,w:Waypoint){
@@ -93,22 +92,27 @@ class RouteOverlay(
   val t=navTarget;val me=myPos
   if(t!=null&&me!=null){
    val a=px(me,proj);val b=px(t,proj)
-   segment(c,a,b,Color.rgb(0,229,255),true,Geo.fmtDist(Geo.dist(me.latitude,me.longitude,t.latitude,t.longitude)))
+   segment(c,a,b,Color.rgb(0,229,255),true,Geo.fmtDist(Geo.dist(me.latitude,me.longitude,t.latitude,t.longitude)),true)
   }
   if(t!=null){val b=px(t,proj);fill.style=Paint.Style.STROKE;fill.strokeWidth=4f*d;fill.color=Color.rgb(0,229,255);c.drawCircle(b[0],b[1],14*d,fill);fill.style=Paint.Style.FILL}
-  // ruler
+  // ruler: fixed vertices + one live arrow from the last vertex to the screen centre
   val rl=ruler
   for(i in 1 until rl.size){
    val p=rl[i-1];val q=rl[i]
-   val dm=Geo.dist(p.latitude,p.longitude,q.latitude,q.longitude)
-   val br=Geo.bearing(p.latitude,p.longitude,q.latitude,q.longitude)
-   segment(c,px(p,proj),px(q,proj),Color.rgb(255,235,59),false,"${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}")
+   segment(c,px(p,proj),px(q,proj),Color.rgb(255,235,59),false,Geo.fmtDist(Geo.dist(p.latitude,p.longitude,q.latitude,q.longitude)),false)
+  }
+  if(rulerMode&&rl.isNotEmpty()){
+   val last=rl[rl.size-1]
+   val cen=osmv.mapCenter
+   val dm=Geo.dist(last.latitude,last.longitude,cen.latitude,cen.longitude)
+   val br=Geo.bearing(last.latitude,last.longitude,cen.latitude,cen.longitude)
+   if(dm>1.0)segment(c,px(last,proj),floatArrayOf(osmv.width/2f,osmv.height/2f),Color.rgb(255,152,0),false,"${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}",true)
   }
   for(i in rl.indices){
    val p=px(rl[i],proj)
-   fill.style=Paint.Style.FILL;fill.color=Color.rgb(255,235,59);c.drawCircle(p[0],p[1],11*d,fill)
-   edge.strokeWidth=2f*d;c.drawCircle(p[0],p[1],11*d,edge)
-   txt.textSize=11*d;val old=txt.color;txt.color=Color.BLACK;c.drawText((i+1).toString(),p[0],p[1]+4*d,txt);txt.color=old
+   fill.style=Paint.Style.FILL;fill.color=Color.rgb(255,235,59);c.drawCircle(p[0],p[1],10*d,fill)
+   edge.strokeWidth=2f*d;c.drawCircle(p[0],p[1],10*d,edge)
+   val old=txt.color;txt.textSize=11*d;txt.color=Color.BLACK;c.drawText(if(i==0)"A" else ('A'+i).toString(),p[0],p[1]+4*d,txt);txt.color=old
   }
   // waypoints
   for(w in wps){
@@ -128,10 +132,9 @@ class RouteOverlay(
   var best:Waypoint?=null;var bd=Float.MAX_VALUE
   for(h in wpHits){val dx=h.first-e.x;val dy=h.second-e.y;val dd=dx*dx+dy*dy;if(dd<=tol*tol&&dd<bd){bd=dd;best=h.third}}
   if(rulerMode){
-   val w=best
-   if(w!=null)onRulerPoint(GeoPoint(w.lat,w.lon))
-   else{val g=mapView.projection.fromPixels(e.x.toInt(),e.y.toInt());onRulerPoint(GeoPoint(g.latitude,g.longitude))}
-   return true
+   val w0=best
+   if(w0!=null){onRulerPoint(GeoPoint(w0.lat,w0.lon));return true}
+   return false
   }
   val w=best?:return false
   onWp(w);return true

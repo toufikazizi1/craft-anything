@@ -45,6 +45,7 @@ import org.osmdroid.views.overlay.ScaleBarOverlay
 import org.osmdroid.views.overlay.compass.CompassOverlay
 import org.osmdroid.views.overlay.compass.InternalCompassOrientationProvider
 import org.osmdroid.events.MapListener
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.events.ScrollEvent
 import org.osmdroid.events.ZoomEvent
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
@@ -103,6 +104,12 @@ class MainActivity:AppCompatActivity() {
  private lateinit var routeOv:RouteOverlay
  private lateinit var coordChip:TextView
  private lateinit var hud:TextView
+ private lateinit var hudBox:LinearLayout
+ private lateinit var rulerRow:LinearLayout
+ private lateinit var navRow:LinearLayout
+ private lateinit var places:PlacesOverlay
+ private var ticks=0
+ private val placesFile by lazy { File(filesDir,"places.tsv") }
  private lateinit var rulerFab:TextView
  private var compass:CompassOverlay?=null
  private var waypoints:MutableList<Waypoint> = ArrayList()
@@ -113,6 +120,7 @@ class MainActivity:AppCompatActivity() {
  private val ui=Handler(Looper.getMainLooper())
  private val tick=object:Runnable{override fun run(){
   try{routeOv.myPos=myLoc?.myLocation;updateHud();if(navTarget!=null)map.invalidate()}catch(_:Exception){}
+  ticks++;if(ticks==2||ticks%400==0)refreshFireballs(true)
   ui.postDelayed(this,1500)
  }}
 
@@ -136,18 +144,22 @@ class MainActivity:AppCompatActivity() {
   offline=prefs.getBoolean("offline",false)
   makeUi()
   points=PointsOverlay(this,{m->showMeteorite(m)},{g,c->onGroupTap(g,c)},{e->showFireball(e)})
+  places=PlacesOverlay(this){p->showPlace(p)}
+  map.overlays.add(places)
   map.overlays.add(points)
+  loadPlaces()
   waypoints=WpStore.load(prefs)
   routeOv=RouteOverlay(this,{w->showWaypoint(w)},{g->editWaypoint(null,g.latitude,g.longitude)},{g->rulerAdd(g)})
   routeOv.wps=ArrayList(waypoints)
   map.overlays.add(routeOv)
+  try{val rg=RotationGestureOverlay(map);rg.isEnabled=true;map.overlays.add(rg)}catch(_:Exception){}
   try{
    val sb=ScaleBarOverlay(map);sb.setAlignBottom(true);sb.setScaleBarOffset(dp(12),dp(64));sb.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric);map.overlays.add(sb)
    val cp=CompassOverlay(this,InternalCompassOrientationProvider(this),map);cp.setCompassCenter(34f,150f);cp.enableCompass();compass=cp;map.overlays.add(cp)
   }catch(_:Exception){}
   map.addMapListener(object:MapListener{
-   override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();return false}
-   override fun onZoom(event:ZoomEvent?):Boolean{updateCoord();return false}
+   override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();updateHud();return false}
+   override fun onZoom(event:ZoomEvent?):Boolean{updateCoord();updateHud();return false}
   })
   setMapStyle(prefs.getInt("style2",0).coerceIn(0,3))
   styleReady=true
@@ -178,7 +190,7 @@ class MainActivity:AppCompatActivity() {
 
   // ---- Page 0: full-screen map only ----
   val mapPage=FrameLayout(this)
-  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=true;setUseDataConnection(!offline);minZoomLevel=3.0}
+  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1.6f);setUseDataConnection(!offline);minZoomLevel=3.0}
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
   countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
   mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
@@ -188,11 +200,23 @@ class MainActivity:AppCompatActivity() {
    return v
   }
   fab("📍",0){locate(true)}
-  fab("🇩🇿",1){map.controller.setZoom(4.8);map.controller.animateTo(GeoPoint(28.0,2.5))}
+  fab("🇩🇿",1){map.setMapOrientation(0f);map.controller.setZoom(4.8);map.controller.animateTo(GeoPoint(28.0,2.5))}
   fab("➕",2){addWaypointMenu()}
   rulerFab=fab("📏",3){toggleRuler()}
-  hud=TextView(this).apply{textSize=13f;setTextColor(Color.WHITE);visibility=View.GONE;setPadding(dp(12),dp(8),dp(12),dp(8));background=GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(230,0,96,110))};setOnClickListener{hudMenu()}}
-  mapPage.addView(hud,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(56),dp(12),0)})
+  fab("⬆N",4){map.setMapOrientation(0f);say("الشمال إلى الأعلى. لتدوير الخريطة: لفّ إصبعين عليها.")}
+  hud=TextView(this).apply{textSize=13f;setTextColor(Color.WHITE);setPadding(dp(6),dp(4),dp(6),dp(2))}
+  fun chip(t:String,f:()->Unit)=TextView(this).apply{text=t;textSize=12f;setTextColor(Color.WHITE);gravity=Gravity.CENTER;setPadding(dp(6),dp(9),dp(6),dp(9));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(255,0,60,70));setStroke(dp(1),Color.WHITE)};setOnClickListener{f()}}
+  fun cp()=LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(4),dp(2),0)}
+  rulerRow=LinearLayout(this).apply{orientation=0;visibility=View.GONE}
+  rulerRow.addView(chip("📍 ثبّت"){rulerFix()},cp())
+  rulerRow.addView(chip("▶ ابدأ هنا"){rulerRestart()},cp())
+  rulerRow.addView(chip("↩ تراجع"){rulerUndo()},cp())
+  rulerRow.addView(chip("✖ إنهاء ومسح"){toggleRuler()},cp())
+  navRow=LinearLayout(this).apply{orientation=0;visibility=View.GONE}
+  navRow.addView(chip("⛔ إيقاف التوجيه"){navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()},cp())
+  hudBox=LinearLayout(this).apply{orientation=1;visibility=View.GONE;setPadding(dp(8),dp(4),dp(8),dp(8));background=GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(238,0,96,110))}}
+  hudBox.addView(hud);hudBox.addView(rulerRow);hudBox.addView(navRow)
+  mapPage.addView(hudBox,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(56),dp(12),0)})
   coordChip=TextView(this).apply{textSize=11f;setTextColor(Color.WHITE);setPadding(dp(10),dp(5),dp(10),dp(5));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,16,35,45))};setOnClickListener{
    val c=map.mapCenter;val t=Geo.dec(c.latitude,c.longitude)
    (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("coords",t));say("نُسخت الإحداثيات: $t")}}
@@ -222,7 +246,7 @@ class MainActivity:AppCompatActivity() {
   val p2=pageBox()
   p2.addView(title("📡 رادار الكرات النارية (NASA)"))
   alertsBtn=btn(""){toggleAlerts()};p2.addView(alertsBtn,lp(dp(48)));updateAlertsButton()
-  p2.addView(btn("تحديث الأحداث من NASA/JPL"){refreshFireballs()},lp(dp(48)))
+  p2.addView(btn("تحديث الأحداث من NASA/JPL"){refreshFireballs(false)},lp(dp(48)))
   fireInfo=note("اضغط تحديث لجلب أحدث الأحداث. البيانات من NASA/JPL وليست بثاً لحظياً؛ النقطة هي ذروة سطوع الكرة النارية وليست بالضرورة موقع سقوط.");p2.addView(fireInfo)
   fireAdapter=darkAdapter()
   val fireList=ListView(this).apply{adapter=fireAdapter;setOnItemClickListener{_,_,i,_->fireballEvents.getOrNull(i)?.let{showFireball(it)}}}
@@ -244,6 +268,7 @@ class MainActivity:AppCompatActivity() {
    val bb=map.boundingBox
    downloadArea(BoundingBox(bb.latNorth,bb.lonEast,bb.latSouth,bb.lonWest),map.zoomLevelDouble.toInt().coerceAtLeast(3),14,"المنطقة الظاهرة")
   },lp(dp(48)))
+  p3.addView(btn("⬇ تحميل أسماء القرى والآبار والعيون (OSM)"){downloadPlaces()},lp(dp(48)))
   dlInfo=note("");p3.addView(dlInfo)
   p3.addView(btn("🔄 إعادة تحميل قاعدة النيازك المحلية"){load(true)},lp(dp(48)))
   p3.addView(btn("📥 استيراد CSV من Meteoritical Bulletin"){val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="text/*"};startActivityForResult(i,4102)},lp(dp(48)))
@@ -343,6 +368,70 @@ class MainActivity:AppCompatActivity() {
     next()
    }.setNegativeButton("إلغاء",null).show()
  }
+ private fun loadPlaces(){
+  worker.execute{try{
+   if(!placesFile.exists())return@execute
+   val l=placesFile.useLines(Charsets.UTF_8){ls->ls.mapNotNull{ln->val t=ln.split('\t');if(t.size<4)null else{val la=t[0].toDoubleOrNull();val lo=t[1].toDoubleOrNull();if(la==null||lo==null)null else Place(la,lo,t[2],t[3],t.getOrElse(4){""})}}.toList()}
+   runOnUiThread{places.setData(l);map.invalidate()}
+  }catch(_:Exception){}}
+ }
+ private fun showPlace(p:Place){
+  AlertDialog.Builder(this).setTitle(p.name)
+   .setMessage("${PlacesOverlay.kindAr(p.kind)}"+(if(p.alt.isNotBlank()&&p.alt!=p.name)"\n${p.alt}" else "")+"\n\n"+Geo.full(p.lat,p.lon)+"\n\nالمصدر: OpenStreetMap")
+   .setPositiveButton("🧭 اتجه إليه"){_,_->setNav(p.lat,p.lon,p.name)}
+   .setNeutralButton("📌 احفظ كعلامة"){_,_->editWaypoint(null,p.lat,p.lon,p.name)}
+   .setNegativeButton("إغلاق",null).show()
+ }
+ private fun post(url:String,body:String):String{
+  val c=URL(url).openConnection() as HttpURLConnection
+  c.requestMethod="POST";c.doOutput=true;c.connectTimeout=30000;c.readTimeout=180000
+  c.setRequestProperty("User-Agent","MeteoriteAtlas-Android/1.7");c.setRequestProperty("Content-Type","application/x-www-form-urlencoded")
+  try{
+   c.outputStream.use{it.write(("data="+URLEncoder.encode(body,"UTF-8")).toByteArray(Charsets.UTF_8))}
+   if(c.responseCode !in 200..299)throw Exception("HTTP ${c.responseCode}")
+   return c.inputStream.bufferedReader(Charsets.UTF_8).use{it.readText()}
+  }finally{c.disconnect()}
+ }
+ private fun downloadPlaces(){
+  if(downloading){say("هناك تحميل جارٍ.");return}
+  if(offline){say("فعّل وضع الاتصال أولاً.");return}
+  downloading=true;dlInfo.text="جارٍ تحميل أسماء القرى والآبار… (قد يستغرق دقائق)"
+  worker.execute{
+   val latE=doubleArrayOf(19.0,24.5,30.0,37.4);val lonE=doubleArrayOf(-8.8,-2.0,5.0,12.2)
+   val servers=listOf("https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter")
+   val sb=StringBuilder();var n=0;var failed=0;var done=0
+   for(i in 0 until 3)for(j in 0 until 3){
+    val s0=latE[i];val n0=latE[i+1];val w0=lonE[j];val e0=lonE[j+1]
+    val q="""[out:json][timeout:150];(node["place"~"^(town|village|hamlet|locality|isolated_dwelling)$"]["name"]($s0,$w0,$n0,$e0);node["man_made"="water_well"]["name"]($s0,$w0,$n0,$e0);node["natural"="spring"]["name"]($s0,$w0,$n0,$e0);node["amenity"="drinking_water"]["name"]($s0,$w0,$n0,$e0););out;"""
+    var ok=false
+    for(sv in servers){
+     try{
+      val arr=JSONObject(post(sv,q)).optJSONArray("elements")?:continue
+      for(k in 0 until arr.length()){
+       val o=arr.optJSONObject(k)?:continue
+       val tg=o.optJSONObject("tags")?:continue
+       val kind=when{tg.has("place")->tg.optString("place");tg.optString("man_made")=="water_well"->"well";tg.optString("natural")=="spring"->"spring";else->"water"}
+       val nm=tg.optString("name");val ar=tg.optString("name:ar")
+       val main=(if(ar.isNotBlank())ar else nm).replace('\t',' ').replace('\n',' ')
+       val alt=(if(ar.isNotBlank()&&nm!=ar)nm else tg.optString("name:fr")).replace('\t',' ').replace('\n',' ')
+       if(main.isBlank())continue
+       sb.append(o.optDouble("lat")).append('\t').append(o.optDouble("lon")).append('\t').append(kind).append('\t').append(main).append('\t').append(alt).append('\n');n++
+      }
+      ok=true;break
+     }catch(_:Exception){}
+    }
+    if(!ok)failed++
+    done++
+    runOnUiThread{dlInfo.text="تحميل الأسماء: $done / 9 (${n} اسم)"}
+   }
+   try{if(n>0){placesFile.writeText(sb.toString(),Charsets.UTF_8)}}catch(_:Exception){}
+   runOnUiThread{
+    downloading=false
+    dlInfo.text=if(n>0)"✅ حُمّل $n اسم (قرى وآبار وعيون)"+(if(failed>0)" — فشل $failed من 9 أجزاء، أعد المحاولة لاحقاً" else "")+". تظهر عند التقريب وتعمل بدون إنترنت." else "تعذر التحميل. تأكد من الإنترنت وأعد المحاولة."
+    loadPlaces()
+   }
+  }
+ }
  private fun updateCoord(){
   if(!::coordChip.isInitialized)return
   val c=map.mapCenter
@@ -354,15 +443,25 @@ class MainActivity:AppCompatActivity() {
   locate(false);showPage(0);updateHud();map.invalidate()
   say("التوجيه إلى «$name»: يظهر سهم من موقعك إلى الهدف. فعّل الموقع (GPS).")
  }
+ private fun centerPt()=GeoPoint(map.mapCenter.latitude,map.mapCenter.longitude)
+ private fun syncRuler(){routeOv.ruler=ArrayList(rulerPts);updateHud();map.invalidate()}
  private fun toggleRuler(){
   rulerOn=!rulerOn;routeOv.rulerMode=rulerOn
   rulerFab.background=round(if(rulerOn)Color.rgb(198,40,40) else Color.argb(235,16,35,45))
-  if(rulerOn)say("المسطرة: اضغط على الخريطة (أو على علامة) لإضافة نقاط؛ تظهر المسافة والاتجاه بين كل نقطتين.")
-  updateHud()
+  rulerPts.clear()
+  if(rulerOn){rulerPts.add(centerPt());say("المسطرة: النقطة A ثُبّتت في مركز الشاشة (✛). حرّك الخريطة فيتبعك السهم والمسافة. «📍 ثبّت» لتثبيت نقطة جديدة.")}
+  syncRuler()
  }
- private fun rulerAdd(g:GeoPoint){rulerPts.add(g);routeOv.ruler=ArrayList(rulerPts);updateHud();map.invalidate()}
+ private fun rulerRestart(){rulerPts.clear();rulerPts.add(centerPt());syncRuler()}
+ private fun rulerFix(){
+  val c=centerPt();val l=rulerPts.lastOrNull()
+  if(l!=null&&Geo.dist(l.latitude,l.longitude,c.latitude,c.longitude)<2.0){say("حرّك الخريطة أولاً.");return}
+  rulerPts.add(c);syncRuler()
+ }
+ private fun rulerUndo(){if(rulerPts.size>1)rulerPts.removeAt(rulerPts.size-1);syncRuler()}
+ private fun rulerAdd(g:GeoPoint){map.controller.animateTo(g);say("حُرّكت الخريطة إلى العلامة؛ اضغط «📍 ثبّت» لتثبيتها.")}
  private fun updateHud(){
-  if(!::hud.isInitialized)return
+  if(!::hudBox.isInitialized)return
   val lines=ArrayList<String>()
   val t=navTarget
   if(t!=null){
@@ -371,23 +470,17 @@ class MainActivity:AppCompatActivity() {
    val dm=Geo.dist(fLat,fLon,t.latitude,t.longitude);val br=Geo.bearing(fLat,fLon,t.latitude,t.longitude)
    lines.add("🧭 $navName: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}"+(if(me==null)"\n(من مركز الشاشة — شغّل GPS بزر 📍)" else ""))
   }
-  if(rulerPts.isNotEmpty()||rulerOn){
+  if(rulerOn&&rulerPts.isNotEmpty()){
    var total=0.0
    for(i in 1 until rulerPts.size)total+=Geo.dist(rulerPts[i-1].latitude,rulerPts[i-1].longitude,rulerPts[i].latitude,rulerPts[i].longitude)
-   lines.add("📏 المسافة الكلية: ${Geo.fmtDist(total)} • ${rulerPts.size} نقطة")
+   val l=rulerPts[rulerPts.size-1];val c=map.mapCenter
+   val dm=Geo.dist(l.latitude,l.longitude,c.latitude,c.longitude);val br=Geo.bearing(l.latitude,l.longitude,c.latitude,c.longitude)
+   lines.add("📏 من النقطة ${if(rulerPts.size==1)"A" else ('A'+rulerPts.size-1).toString()}: ${Geo.fmtDist(dm)} • ${br.toInt()}° ${Geo.cardinal(br)}\nالمجموع مع المثبّت: ${Geo.fmtDist(total+dm)}")
   }
-  if(lines.isEmpty())hud.visibility=View.GONE else {hud.text=lines.joinToString("\n");hud.visibility=View.VISIBLE}
- }
- private fun hudMenu(){
-  val items=ArrayList<String>();val acts=ArrayList<()->Unit>()
-  if(navTarget!=null){items.add("⛔ إيقاف التوجيه");acts.add{navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()}}
-  if(rulerPts.isNotEmpty()){items.add("↩ حذف آخر نقطة");acts.add{rulerPts.removeAt(rulerPts.size-1);routeOv.ruler=ArrayList(rulerPts);updateHud();map.invalidate()}}
-  if(rulerPts.isNotEmpty()){items.add("🗑 مسح المسار");acts.add{rulerPts.clear();routeOv.ruler=emptyList();updateHud();map.invalidate()}}
-  val me=myLoc?.myLocation
-  if(me!=null){items.add("📍 إضافة موقعي كنقطة في المسار");acts.add{rulerAdd(GeoPoint(me.latitude,me.longitude))}}
-  if(rulerOn){items.add("✔ إنهاء المسطرة");acts.add{toggleRuler()}}
-  if(items.isEmpty())return
-  AlertDialog.Builder(this).setItems(items.toTypedArray()){_,i->acts[i]()}.setNegativeButton("إغلاق",null).show()
+  hudBox.visibility=if(lines.isEmpty())View.GONE else View.VISIBLE
+  hud.text=lines.joinToString("\n")
+  rulerRow.visibility=if(rulerOn)View.VISIBLE else View.GONE
+  navRow.visibility=if(navTarget!=null)View.VISIBLE else View.GONE
  }
  private fun addWaypointMenu(){
   val items=arrayOf("📍 في موقعي الحالي (GPS)","✛ في مركز الشاشة","⌨ إدخال إحداثيات يدوياً")
@@ -400,10 +493,10 @@ class MainActivity:AppCompatActivity() {
   }.setNegativeButton("إلغاء",null).show()
   Toast.makeText(this,"نصيحة: اضغط مطولاً على أي مكان في الخريطة لوضع علامة هناك.",Toast.LENGTH_LONG).show()
  }
- private fun editWaypoint(w:Waypoint?,lat:Double,lon:Double){
+ private fun editWaypoint(w:Waypoint?,lat:Double,lon:Double,prefName:String?=null){
   val box=LinearLayout(this).apply{orientation=1;setPadding(dp(18),dp(8),dp(18),0)}
   val num=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
-  val name=EditText(this).apply{hint="اسم العلامة";setText(w?.name?:"علامة ${waypoints.size+1}")}
+  val name=EditText(this).apply{hint="اسم العلامة";setText(w?.name?:(prefName?:"علامة ${waypoints.size+1}"))}
   val note=EditText(this).apply{hint="ملاحظة (اختياري)";setText(w?.note?:"")}
   val latE=EditText(this).apply{hint="خط العرض Lat";inputType=num;setText(String.format(Locale.US,"%.6f",w?.lat?:lat))}
   val lonE=EditText(this).apply{hint="خط الطول Lon";inputType=num;setText(String.format(Locale.US,"%.6f",w?.lon?:lon))}
@@ -483,8 +576,8 @@ class MainActivity:AppCompatActivity() {
   fireAdapter.addAll(fireballEvents.take(100).map{e->"${e.dateUtc} UTC — ${String.format(Locale.US,"%.2f",e.latitude)}, ${String.format(Locale.US,"%.2f",e.longitude)}"})
   fireInfo.text="الأحداث: ${fireballEvents.size} (من NASA/JPL، ليست بثاً لحظياً). تظهر على الخريطة كنقاط صفراء. اضغط حدثاً للتفاصيل."
  }
- private fun refreshFireballs(){
-  say("جارٍ جلب أحدث الأحداث من NASA/JPL…")
+ private fun refreshFireballs(silent:Boolean=false){
+  if(!silent)say("جارٍ جلب أحدث الأحداث من NASA/JPL…")
   worker.execute {
    try {
     val raw=get("https://ssd-api.jpl.nasa.gov/fireball.api?req-loc=true&limit=100&sort=-date")
@@ -493,9 +586,15 @@ class MainActivity:AppCompatActivity() {
     val temp=File(filesDir,"nasa_fireballs_cache.json.tmp")
     temp.writeText(raw,Charsets.UTF_8)
     if(!temp.renameTo(fireballCache)){fireballCache.writeText(raw,Charsets.UTF_8);temp.delete()}
-    runOnUiThread {fireballEvents=parsed;points.fires=parsed;refreshFireList();map.invalidate();say("تم تحديث ${parsed.size} حدثاً.")}
+    runOnUiThread {
+     val old=fireballEvents.map{it.dateUtc}.toSet()
+     val fresh=if(old.isEmpty())emptyList() else parsed.filter{it.dateUtc !in old}
+     fireballEvents=parsed;points.fires=parsed;refreshFireList();map.invalidate()
+     if(fresh.isNotEmpty())say("☄ ${fresh.size} حدث جديد من NASA على الخريطة. أحدثه: ${fresh[0].dateUtc} UTC")
+     else if(!silent)say("تم تحديث ${parsed.size} حدثاً.")
+    }
    }catch(e:Exception){
-    runOnUiThread {say("تعذر الاتصال بـ NASA/JPL: ${e.message}")}
+    if(!silent)runOnUiThread {say("تعذر الاتصال بـ NASA/JPL: ${e.message}")}
    }
   }
  }
