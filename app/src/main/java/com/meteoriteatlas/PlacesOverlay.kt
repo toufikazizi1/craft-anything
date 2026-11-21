@@ -22,9 +22,10 @@ class PlacesOverlay(ctx:Context,private val onPlace:(Place)->Unit):Overlay() {
  private val txt=Paint(Paint.ANTI_ALIAS_FLAG).apply{textAlign=Paint.Align.CENTER;isFakeBoldText=true}
  private val halo=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.BLACK;textAlign=Paint.Align.CENTER;style=Paint.Style.STROKE;strokeJoin=Paint.Join.ROUND;isFakeBoldText=true}
  companion object{
-  fun rank(k:String):Int=when(k){"town"->0;"village"->1;"water","well","spring"->2;else->3}
-  fun minZoom(k:String):Double=when(k){"town"->7.0;"village"->9.0;"water","well","spring"->9.5;else->10.5}
-  fun kindAr(k:String):String=when(k){"town"->"بلدة";"village"->"قرية";"hamlet"->"مزرعة/عزبة";"locality"->"موقع/منطقة";"isolated_dwelling"->"مسكن معزول";"well"->"بئر";"spring"->"عين";"water"->"نقطة ماء";else->k}
+  fun rank(k:String):Int=when(k){"wilaya"->0;"city"->1;"town"->2;"village"->3;"water","well","spring"->4;else->5}
+  fun minZoom(k:String):Double=when(k){"wilaya"->4.5;"city"->6.0;"town"->7.0;"village"->8.5;"water","well","spring"->9.5;else->10.5}
+  fun size(k:String):Float=when(k){"wilaya"->15f;"city"->13.5f;"town"->12.5f;else->11f}
+  fun kindAr(k:String):String=when(k){"wilaya"->"ولاية";"city"->"مدينة";"town"->"بلدة";"village"->"قرية";"hamlet"->"مزرعة/عزبة";"locality"->"موقع/منطقة";"isolated_dwelling"->"مسكن معزول";"well"->"بئر";"spring"->"عين";"water"->"نقطة ماء";else->k}
  }
  fun setData(l:List<Place>){items=l.sortedBy{rank(it.kind)}}
  private fun isWater(k:String)=k=="water"||k=="well"||k=="spring"
@@ -33,14 +34,14 @@ class PlacesOverlay(ctx:Context,private val onPlace:(Place)->Unit):Overlay() {
   if(shadow)return
   hits.clear()
   val z=osmv.zoomLevelDouble
-  if(z<7.0||items.isEmpty())return
+  if(z<4.5||items.isEmpty())return
   val bb=osmv.boundingBox
   val m=0.05
   val proj=osmv.projection
   val pt=Point()
   val gp=GeoPoint(0.0,0.0)
   val occ=HashSet<Long>()
-  halo.textSize=11*d;halo.strokeWidth=3.5f*d;txt.textSize=11*d
+  halo.strokeWidth=3.5f*d
   val w=osmv.width.toFloat();val h=osmv.height.toFloat()
   for(p in items){
    if(z<minZoom(p.kind))continue
@@ -48,15 +49,16 @@ class PlacesOverlay(ctx:Context,private val onPlace:(Place)->Unit):Overlay() {
    gp.setCoords(p.lat,p.lon);proj.toPixels(gp,pt)
    val x=pt.x.toFloat();val y=pt.y.toFloat()
    if(x<0||y<0||x>w||y>h)continue
-   val key=(((x/(95*d)).toLong()) shl 32) xor (((y/(20*d)).toLong()) and 0xffffffffL)
+   val key=(((x/(100*d)).toLong()) shl 32) xor (((y/(22*d)).toLong()) and 0xffffffffL)
    if(!occ.add(key))continue
    val water=isWater(p.kind)
+   val sz=size(p.kind)*d;halo.textSize=sz;txt.textSize=sz
    fill.color=if(water)Color.rgb(41,182,246) else Color.WHITE
    c.drawCircle(x,y,4.5f*d,fill)
    edge.color=Color.BLACK;edge.strokeWidth=1.3f*d;c.drawCircle(x,y,4.5f*d,edge)
    txt.color=if(water)Color.rgb(179,229,252) else Color.WHITE
    val label=(if(water)"💧 " else "")+p.name
-   c.drawText(label,x,y+15*d,halo);c.drawText(label,x,y+15*d,txt)
+   c.drawText(label,x,y+sz+3*d,halo);c.drawText(label,x,y+sz+3*d,txt)
    hits.add(Triple(x,y,p))
   }
  }

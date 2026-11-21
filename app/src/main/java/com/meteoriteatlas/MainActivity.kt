@@ -104,7 +104,7 @@ class MainActivity:AppCompatActivity() {
  private var fireballEvents=emptyList<FireballEvent>()
  private val fireballCache by lazy { File(filesDir,"nasa_fireballs_cache.json") }
  private var offline=false
- private val styles=listOf("هجين: أقمار Esri + أسماء الولايات والطرق (موصى به)","خريطة الطرق (OpenStreetMap)","أقمار Esri فقط","تضاريس + خطوط ارتفاع (OpenTopoMap)","أقمار Sentinel-2 مجانية + أسماء","أقمار Esri Clarity + أسماء (أوضح أحياناً)","ظلال التضاريس Esri + أسماء","خريطة MBTiles مستوردة (بدون إنترنت)")
+ private val styles=listOf("هجين: أقمار Esri + أسماء الولايات والطرق (موصى به)","خريطة الطرق (OpenStreetMap)","أقمار Esri فقط","تضاريس + خطوط ارتفاع (OpenTopoMap)","أقمار Sentinel-2 مجانية + أسماء","أقمار Esri Clarity + أسماء (أوضح أحياناً)","ظلال التضاريس Esri + أسماء","خريطة MBTiles مستوردة (بدون إنترنت)","أقمار MapTiler (بمفتاح مجاني)")
  private val labelOverlays=ArrayList<TilesOverlay>()
  private var myLoc:MyLocationNewOverlay?=null
  private val pages=ArrayList<View>()
@@ -157,6 +157,7 @@ class MainActivity:AppCompatActivity() {
    if(ticks%2==0)updateCoord()
   }catch(_:Exception){}
   ticks++;if(ticks==2||ticks%400==0)refreshFireballs(true)
+  if(ticks==4&&!placesFile.exists()&&!offline&&!downloading)downloadPlaces()
   ui.postDelayed(this,1500)
  }}
 
@@ -197,7 +198,7 @@ class MainActivity:AppCompatActivity() {
    override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();updateHud();return false}
    override fun onZoom(event:ZoomEvent?):Boolean{updateCoord();updateHud();return false}
   })
-  setMapStyle(prefs.getInt("style2",0).coerceIn(0,7))
+  setMapStyle(prefs.getInt("style2",0).coerceIn(0,8))
   styleReady=true
   map.controller.setZoom(4.8);map.controller.setCenter(GeoPoint(28.0,2.5))
   try{if(fireballCache.exists()){fireballEvents=parseFireballs(fireballCache.readText(Charsets.UTF_8));points.fires=fireballEvents;refreshFireList()}}catch(_:Exception){}
@@ -228,7 +229,7 @@ class MainActivity:AppCompatActivity() {
 
   // ---- Page 0: full-screen map only ----
   val mapPage=FrameLayout(this)
-  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1.6f);setUseDataConnection(!offline);minZoomLevel=3.0}
+  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1.4f);setUseDataConnection(!offline);minZoomLevel=3.0}
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
   countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
   mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
@@ -321,6 +322,11 @@ class MainActivity:AppCompatActivity() {
   val radiusSp=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("100 م","300 م","500 م","1 كم","2 كم"));setBackgroundColor(Color.rgb(220,230,235));setSelection(radii.indexOf(prefs.getInt("near_radius",300)).coerceAtLeast(0))}
   radiusSp.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){prefs.edit().putInt("near_radius",radii[pos]).apply()}}
   p3.addView(radiusSp,lp(dp(46)))
+  p3.addView(btn("🔑 مفتاح MapTiler المجاني (صور أقمار بديلة)"){
+   val e=EditText(this).apply{hint="الصق المفتاح هنا";setText(prefs.getString("maptiler_key","")?:"")}
+   AlertDialog.Builder(this).setTitle("مفتاح MapTiler").setMessage("سجّل مجاناً في maptiler.com (بدون بطاقة) وانسخ المفتاح من Account ← API keys، ثم اختر النمط الأخير «أقمار MapTiler».").setView(e)
+    .setPositiveButton("حفظ"){_,_->prefs.edit().putString("maptiler_key",e.text.toString().trim()).apply();say("تم حفظ المفتاح. اختر النمط «أقمار MapTiler».")}.setNegativeButton("إلغاء",null).show()
+  },lp(dp(48)))
   p3.addView(btn("🗺 استيراد خريطة MBTiles (بدون إنترنت)"){importMbtiles()},lp(dp(48)))
   p3.addView(note("• النقاط تعمل بدون إنترنت (محفوظة في التطبيق).\n• الخريطة تُخزَّن مؤقتاً أثناء تصفحها؛ تصفّح المنطقة وأنت متصل لتبقى متاحة بعدها.\n• GPS يعمل بدون إنترنت.\n• التنبيهات والرادار يحتاجان إنترنت.\n\nالمصادر: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © OpenStreetMap contributors • © Esri • OpenTopoMap"))
   sv.addView(p3,FrameLayout.LayoutParams(-1,-2))
@@ -338,7 +344,7 @@ class MainActivity:AppCompatActivity() {
 
   query.setOnEditorActionListener{_,a,_->if(a==EditorInfo.IME_ACTION_SEARCH){applyFilter();true}else false}
   fallFilter.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){if(data.isNotEmpty())applyFilter()}}
-  mapStyle.setSelection(prefs.getInt("style2",0).coerceIn(0,7))
+  mapStyle.setSelection(prefs.getInt("style2",0).coerceIn(0,8))
   mapStyle.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){if(styleReady)setMapStyle(pos)}}
  }
 
@@ -419,11 +425,14 @@ class MainActivity:AppCompatActivity() {
     next()
    }.setNegativeButton("إلغاء",null).show()
  }
+ private fun parsePlaces(ls:Sequence<String>):List<Place> = ls.mapNotNull{ln->val t=ln.split('\t');if(t.size<4)null else{val la=t[0].toDoubleOrNull();val lo=t[1].toDoubleOrNull();if(la==null||lo==null)null else Place(la,lo,t[2],t[3],t.getOrElse(4){""})}}.toList()
  private fun loadPlaces(){
   worker.execute{try{
-   if(!placesFile.exists())return@execute
-   val l=placesFile.useLines(Charsets.UTF_8){ls->ls.mapNotNull{ln->val t=ln.split('\t');if(t.size<4)null else{val la=t[0].toDoubleOrNull();val lo=t[1].toDoubleOrNull();if(la==null||lo==null)null else Place(la,lo,t[2],t[3],t.getOrElse(4){""})}}.toList()}
-   runOnUiThread{places.setData(l);map.invalidate()}
+   val base=try{assets.open("wilayas.tsv").bufferedReader(Charsets.UTF_8).useLines{parsePlaces(it)}}catch(_:Exception){emptyList()}
+   val dl=try{if(placesFile.exists())placesFile.useLines(Charsets.UTF_8){parsePlaces(it)} else emptyList()}catch(_:Exception){emptyList()}
+   val names=base.map{it.name}.toSet()
+   val all=base+dl.filter{!(it.kind=="city"||it.kind=="town")||it.name !in names}
+   runOnUiThread{places.setData(all);map.invalidate()}
   }catch(_:Exception){}}
  }
  private fun showPlace(p:Place){
@@ -453,7 +462,7 @@ class MainActivity:AppCompatActivity() {
    val sb=StringBuilder();var n=0;var failed=0;var done=0
    for(i in 0 until 3)for(j in 0 until 3){
     val s0=latE[i];val n0=latE[i+1];val w0=lonE[j];val e0=lonE[j+1]
-    val q="""[out:json][timeout:150];(node["place"~"^(town|village|hamlet|locality|isolated_dwelling)$"]["name"]($s0,$w0,$n0,$e0);node["man_made"="water_well"]["name"]($s0,$w0,$n0,$e0);node["natural"="spring"]["name"]($s0,$w0,$n0,$e0);node["amenity"="drinking_water"]["name"]($s0,$w0,$n0,$e0););out;"""
+    val q="""[out:json][timeout:150];(node["place"~"^(city|town|village|hamlet|locality|isolated_dwelling)$"]["name"]($s0,$w0,$n0,$e0);node["man_made"="water_well"]["name"]($s0,$w0,$n0,$e0);node["natural"="spring"]["name"]($s0,$w0,$n0,$e0);node["amenity"="drinking_water"]["name"]($s0,$w0,$n0,$e0););out;"""
     var ok=false
     for(sv in servers){
      try{
@@ -697,10 +706,9 @@ class MainActivity:AppCompatActivity() {
   override fun getTileURLString(tile:Long):String{val z=MapTileIndex.getZoom(tile);val x=MapTileIndex.getX(tile);val y=MapTileIndex.getY(tile);return "$prefix$z/$y/$x$suffix"}
  }
  private fun addEsriLabels(){
-  val places=labelLayer(esri("Esri Boundaries Places","Reference/World_Boundaries_and_Places",".png"))
   val roads=labelLayer(esri("Esri Transportation","Reference/World_Transportation",".png"))
-  map.overlays.add(0,roads);map.overlays.add(1,places)
-  labelOverlays.add(roads);labelOverlays.add(places)
+  map.overlays.add(0,roads)
+  labelOverlays.add(roads)
  }
  private fun setMapStyle(i0:Int){
   if(!::map.isInitialized)return
@@ -718,6 +726,15 @@ class MainActivity:AppCompatActivity() {
    4->{map.setTileSource(xyz("EOX Sentinel-2 2021",13,".jpg","https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/",".jpg"));addEsriLabels()}
    5->{map.setTileSource(xyz("Esri Clarity",17,".jpg","https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/",""));addEsriLabels()}
    6->{map.setTileSource(esri("Esri Hillshade","Elevation/World_Hillshade",".jpg"));addEsriLabels()}
+   8->{
+    val key=prefs.getString("maptiler_key","")?:""
+    if(key.isBlank()){say("أدخل مفتاح MapTiler المجاني من الإعدادات أولاً.");map.setTileSource(esri("Esri World Imagery","World_Imagery",".jpg"));addEsriLabels()}
+    else{
+     map.setTileSource(object:OnlineTileSourceBase("MapTiler Satellite",0,20,256,".jpg",arrayOf("https://api.maptiler.com/tiles/satellite-v2/")){
+      override fun getTileURLString(tile:Long):String{val z=MapTileIndex.getZoom(tile);val x=MapTileIndex.getX(tile);val y=MapTileIndex.getY(tile);return "https://api.maptiler.com/tiles/satellite-v2/$z/$x/$y.jpg?key=$key"}
+     });addEsriLabels()
+    }
+   }
    else->{}
   }
   try{map.overlayManager.tilesOverlay.apply{setLoadingBackgroundColor(Color.rgb(22,34,42));setLoadingLineColor(Color.rgb(40,58,68))}}catch(_:Exception){}

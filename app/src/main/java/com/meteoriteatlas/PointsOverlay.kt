@@ -58,7 +58,6 @@ class PointsOverlay(
   val r=10*d
   val pt=Point()
   val gp=GeoPoint(0.0,0.0)
-  val showLabels=z>=7.5
   halo.textSize=12*d;halo.strokeWidth=3.5f*d
   txt.textSize=12*d
   for(m in mets){
@@ -67,11 +66,6 @@ class PointsOverlay(
    val x=pt.x.toFloat();val y=pt.y.toFloat()
    if(x< -margin||y< -margin||x>w+margin||y>h+margin+3*r)continue
    pin(c,x,y,r,if(isFell(m))Color.rgb(229,57,53) else Color.rgb(244,81,30))
-   if(showLabels){
-    val ty=y-4.2f*r-4*d
-    c.drawText(m.name,x,ty,halo)
-    c.drawText(m.name,x,ty,txt)
-   }
    hits.add(Hit(x,y-2.1f*r,r,m,null))
   }
   for(ev in fires){
