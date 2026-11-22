@@ -169,7 +169,8 @@ class MainActivity:AppCompatActivity() {
    if(ticks%2==0)updateCoord()
   }catch(_:Exception){}
   ticks++;if(ticks==2||ticks%400==0)refreshFireballs(true)
-  if(ticks==4&&!placesFile.exists()&&!offline&&!downloading)downloadPlaces()
+  if(ticks==4&&!placesFile.exists()&&!downloading&&online())downloadPlaces()
+  if(ticks==8&&!prefs.getBoolean("algeria_done",false)&&!downloading&&online()){prefs.edit().putBoolean("algeria_done",true).apply();downloadArea(BoundingBox(37.3,12.2,18.9,-8.8),3,9,"الجزائر كاملة")}
   ui.postDelayed(this,1500)
  }}
 
@@ -190,7 +191,7 @@ class MainActivity:AppCompatActivity() {
   Configuration.getInstance().setCacheMapTileCount(80.toShort())
   Configuration.getInstance().setExpirationOverrideDuration(1000L*60*60*24*365*5)
   try{File(filesDir,"meteorites.csv").delete()}catch(_:Exception){}
-  offline=prefs.getBoolean("offline",false)
+  offline=false
   makeUi()
   points=PointsOverlay(this,{m->showMeteorite(m)},{g,c->onGroupTap(g,c)},{e->showFireball(e)})
   places=PlacesOverlay(this){p->showPlace(p)}
@@ -217,6 +218,7 @@ class MainActivity:AppCompatActivity() {
   showPage(0)
   updateCoord()
   if(prefs.getBoolean("rec_on",false)){recFab.background=round(Color.rgb(198,40,40))}
+  if(!prefs.contains("near_on")){prefs.edit().putBoolean("near_on",false).apply();ui.postDelayed({needLoc{prefs.edit().putBoolean("near_on",true).apply();syncService();updateNearBtn()}},1500)}
   if(prefs.getBoolean("rec_on",false)||prefs.getBoolean("near_on",false))syncService()
   ui.postDelayed(tick,1500)
   load(false)
@@ -319,39 +321,12 @@ class MainActivity:AppCompatActivity() {
   p3.addView(note("نمط الخريطة"))
   mapStyle=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,styles);setBackgroundColor(Color.rgb(220,230,235))}
   p3.addView(mapStyle,lp(dp(46)))
-  offlineButton=btn(""){offline=!offline;prefs.edit().putBoolean("offline",offline).apply();map.setUseDataConnection(!offline);updateOfflineButton();say(if(offline)"وضع عدم الاتصال: يُعرض فقط ما سبق تخزينه من الخريطة، ونقاط النيازك محلية." else "الاتصال مفعّل: تُحمّل مربعات الخريطة عند عرضها.")}
-  p3.addView(offlineButton,lp(dp(48)));updateOfflineButton()
-  p3.addView(note("الخريطة بدون إنترنت: حمّل الخريطة وأنت متصل (أقمار صناعية + أسماء الولايات والطرق) ثم تعمل بعدها بدون إنترنت."))
-  p3.addView(btn("⬇ تحميل خريطة الجزائر كاملة (حتى zoom 9)"){downloadArea(BoundingBox(37.3,12.2,18.9,-8.8),3,9,"الجزائر كاملة")},lp(dp(48)))
-  p3.addView(btn("⬇ تحميل المنطقة الظاهرة على الخريطة بتفصيل أعلى"){
-   val bb=map.boundingBox
-   downloadArea(BoundingBox(bb.latNorth,bb.lonEast,bb.latSouth,bb.lonWest),map.zoomLevelDouble.toInt().coerceAtLeast(3),14,"المنطقة الظاهرة")
-  },lp(dp(48)))
-  p3.addView(btn("⬇ تحميل أسماء القرى والآبار والعيون (OSM)"){downloadPlaces()},lp(dp(48)))
+  offlineButton=Button(this)
   dlInfo=note("");p3.addView(dlInfo)
-  dlInfo.addTextChangedListener(object:TextWatcher{
-   override fun beforeTextChanged(t:CharSequence?,a:Int,b:Int,c:Int){}
-   override fun onTextChanged(t:CharSequence?,a:Int,b:Int,c:Int){}
-   override fun afterTextChanged(e:Editable?){val x=e?.toString()?:"";progressChip.text=x;progressChip.visibility=if(x.isBlank())View.GONE else View.VISIBLE}
-  })
-  p3.addView(btn("🔄 إعادة تحميل قاعدة النيازك المحلية"){load(true)},lp(dp(48)))
-  p3.addView(btn("📥 استيراد CSV من Meteoritical Bulletin"){val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="text/*"};startActivityForResult(i,4102)},lp(dp(48)))
-  p3.addView(note("— المسارات والعلامات —"))
+  nearBtn=btn(""){toggleNear()};updateNearBtn()
+  p3.addView(note("كل شيء تلقائي: الخريطة التي تتصفحها تُحفظ وتبقى بعد قطع الإنترنت، والجزائر وأسماء القرى والآبار تُحمّل وحدها."))
   p3.addView(btn("🥾 مساراتي المحفوظة"){showTracks()},lp(dp(48)))
-  p3.addView(btn("📤 تصدير العلامات والمسارات (GPX)"){exportGpx()},lp(dp(48)))
-  p3.addView(btn("📥 استيراد ملف GPX"){importGpx()},lp(dp(48)))
-  nearBtn=btn(""){toggleNear()};p3.addView(nearBtn,lp(dp(48)));updateNearBtn()
-  p3.addView(note("مسافة تنبيه الاقتراب"))
-  val radii=intArrayOf(100,300,500,1000,2000)
-  val radiusSp=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("100 م","300 م","500 م","1 كم","2 كم"));setBackgroundColor(Color.rgb(220,230,235));setSelection(radii.indexOf(prefs.getInt("near_radius",300)).coerceAtLeast(0))}
-  radiusSp.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){prefs.edit().putInt("near_radius",radii[pos]).apply()}}
-  p3.addView(radiusSp,lp(dp(46)))
-  p3.addView(btn("🔑 مفتاح MapTiler المجاني (صور أقمار بديلة)"){
-   val e=EditText(this).apply{hint="الصق المفتاح هنا";setText(prefs.getString("maptiler_key","")?:"")}
-   AlertDialog.Builder(this).setTitle("مفتاح MapTiler").setMessage("سجّل مجاناً في maptiler.com (بدون بطاقة) وانسخ المفتاح من Account ← API keys، ثم اختر النمط الأخير «أقمار MapTiler».").setView(e)
-    .setPositiveButton("حفظ"){_,_->prefs.edit().putString("maptiler_key",e.text.toString().trim()).apply();say("تم حفظ المفتاح. اختر النمط «أقمار MapTiler».")}.setNegativeButton("إلغاء",null).show()
-  },lp(dp(48)))
-  p3.addView(btn("🗺 استيراد خريطة MBTiles (بدون إنترنت)"){importMbtiles()},lp(dp(48)))
+  p3.addView(btn("📂 رفع ملف النقاط والآبار (GPX)"){importGpx()},lp(dp(48)))
   p3.addView(note("• النقاط تعمل بدون إنترنت (محفوظة في التطبيق).\n• الخريطة تُخزَّن مؤقتاً أثناء تصفحها؛ تصفّح المنطقة وأنت متصل لتبقى متاحة بعدها.\n• GPS يعمل بدون إنترنت.\n• التنبيهات والرادار يحتاجان إنترنت.\n\nالمصادر: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © OpenStreetMap contributors • © Esri • OpenTopoMap"))
   sv.addView(p3,FrameLayout.LayoutParams(-1,-2))
   content.addView(sv,FrameLayout.LayoutParams(-1,-1));pages.add(sv)
@@ -405,7 +380,7 @@ class MainActivity:AppCompatActivity() {
     it("🔒","تأمين الشاشة"){lockScreen(true)}
     it("⚙","الإعدادات"){showPage(3)}
     it("📤","تصدير العلامات والمسارات (GPX)"){exportGpx()}
-    it("📥","استيراد ملف GPX"){importGpx()}
+    it("📂","رفع ملف النقاط والآبار (GPX)"){importGpx()}
     it("⋮","المزيد…"){showAbout()}
     it("⏻","إغلاق التطبيق"){finish()}
     Pair("القائمة",l)
@@ -413,9 +388,6 @@ class MainActivity:AppCompatActivity() {
    1->{
     it("🗺","استعراض الخرائط (نمط الخريطة)"){pickStyle()}
     it("🗂","الخرائط المعروضة (الطبقات)"){pickLayers()}
-    it("💾","تخزين منطقة للعمل بدون إنترنت"){storeMenu()}
-    it("📶",if(offline)"وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"){offlineButton.performClick()}
-    it("⚙","خيارات الخرائط الأخرى (MapTiler / MBTiles)"){showPage(3)}
     Pair("خرائط، طبقات",l)
    }
    2->{
@@ -852,6 +824,7 @@ class MainActivity:AppCompatActivity() {
   val labels=waypoints.map{"${WpStore.ICONS[it.icon.coerceIn(0,WpStore.ICONS.size-1)]} ${it.name} — ${String.format(Locale.US,"%.4f, %.4f",it.lat,it.lon)}"}.toTypedArray()
   AlertDialog.Builder(this).setTitle("علاماتي (${waypoints.size})").setItems(labels){_,i->showWaypoint(waypoints[i])}.setNegativeButton("إغلاق",null).show()
  }
+ private fun online():Boolean=try{val cm=getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager;cm.activeNetworkInfo?.isConnected==true}catch(_:Exception){false}
  private fun updateOfflineButton(){offlineButton.text=if(offline)"● وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "● وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"}
 
  private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,17,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
