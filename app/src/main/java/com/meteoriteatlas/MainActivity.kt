@@ -229,7 +229,7 @@ class MainActivity:AppCompatActivity() {
 
   // ---- Page 0: full-screen map only ----
   val mapPage=FrameLayout(this)
-  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1f);setUseDataConnection(!offline);minZoomLevel=3.0;maxZoomLevel=19.0}
+  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1f);setUseDataConnection(!offline);minZoomLevel=3.0}
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
   countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
   mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
@@ -695,7 +695,7 @@ class MainActivity:AppCompatActivity() {
  }
  private fun updateOfflineButton(){offlineButton.text=if(offline)"● وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "● وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"}
 
- private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,19,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
+ private fun esri(name:String,path:String,ext:String)=object:OnlineTileSourceBase(name,0,17,256,ext,arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/")){
   override fun getTileURLString(tile:Long):String{val z=MapTileIndex.getZoom(tile);val x=MapTileIndex.getX(tile);val y=MapTileIndex.getY(tile);return "https://server.arcgisonline.com/ArcGIS/rest/services/$path/MapServer/tile/$z/$y/$x"}
  }
  private fun labelLayer(src:OnlineTileSourceBase):TilesOverlay{
