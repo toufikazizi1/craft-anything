@@ -28,6 +28,7 @@ class RouteOverlay(
  var rulerMode=false
  var navTarget:GeoPoint?=null
  var myPos:GeoPoint?=null
+ var showWps=true
  var recTrack:List<GeoPoint> = emptyList()
  var savedTracks:List<List<GeoPoint>> = emptyList()
  private val tpath=Path()
@@ -137,7 +138,7 @@ class RouteOverlay(
    val old=txt.color;txt.textSize=11*d;txt.color=Color.BLACK;c.drawText(if(i==0)"A" else ('A'+i).toString(),p[0],p[1]+4*d,txt);txt.color=old
   }
   // waypoints
-  for(w in wps){
+  for(w in (if(showWps)wps else emptyList())){
    val p=px(GeoPoint(w.lat,w.lon),proj)
    if(p[0]< -100||p[1]< -100||p[0]>osmv.width+100||p[1]>osmv.height+150)continue
    badge(c,p[0],p[1],w)

@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -118,6 +120,16 @@ class MainActivity:AppCompatActivity() {
  private lateinit var navRow:LinearLayout
  private lateinit var places:PlacesOverlay
  private var ticks=0
+ private lateinit var toolbar:LinearLayout
+ private lateinit var panelBox:LinearLayout
+ private lateinit var restoreBtn:TextView
+ private lateinit var lockOverlay:FrameLayout
+ private lateinit var infoBox:TextView
+ private lateinit var progressChip:TextView
+ private val tabViews=ArrayList<TextView>()
+ private var panelIdx=-1
+ private var currentPage=0
+ private val styleShort=listOf("هجين","طرق OSM","أقمار Esri","تضاريس","Sentinel-2","Clarity","ظلال","MBTiles","MapTiler")
  private lateinit var recFab:TextView
  private lateinit var navArrow:TextView
  private lateinit var nearBtn:Button
@@ -191,8 +203,8 @@ class MainActivity:AppCompatActivity() {
   map.overlays.add(routeOv)
   try{val rg=RotationGestureOverlay(map);rg.isEnabled=true;map.overlays.add(rg)}catch(_:Exception){}
   try{
-   val sb=ScaleBarOverlay(map);sb.setAlignBottom(true);sb.setScaleBarOffset(dp(12),dp(64));sb.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric);map.overlays.add(sb)
-   val cp=CompassOverlay(this,InternalCompassOrientationProvider(this),map);cp.setCompassCenter(34f,150f);cp.enableCompass();compass=cp;map.overlays.add(cp)
+   val sb=ScaleBarOverlay(map);sb.setAlignBottom(true);sb.setScaleBarOffset(dp(12),dp(100));sb.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric);map.overlays.add(sb)
+   val cp=CompassOverlay(this,InternalCompassOrientationProvider(this),map);cp.setCompassCenter(340f,150f);cp.enableCompass();compass=cp;map.overlays.add(cp)
   }catch(_:Exception){}
   map.addMapListener(object:MapListener{
    override fun onScroll(event:ScrollEvent?):Boolean{updateCoord();updateHud();return false}
@@ -216,26 +228,24 @@ class MainActivity:AppCompatActivity() {
  private fun lp(h:Int)=LinearLayout.LayoutParams(-1,h).apply{setMargins(0,dp(4),0,dp(4))}
  private fun title(t:String)=TextView(this).apply{text=t;textSize=21f;setTextColor(Color.WHITE);setPadding(dp(2),dp(4),dp(2),dp(10))}
  private fun note(t:String)=TextView(this).apply{text=t;textSize=13f;setTextColor(Color.rgb(190,205,212));setPadding(dp(2),dp(4),dp(2),dp(4))}
- private fun pageBox()=LinearLayout(this).apply{orientation=1;setBackgroundColor(Color.rgb(12,25,34));setPadding(dp(12),dp(10),dp(12),dp(6))}
+ private fun pageBox()=LinearLayout(this).apply{orientation=1;setBackgroundColor(Color.rgb(12,25,34));setPadding(dp(12),dp(10),dp(12),dp(90))}
  private fun darkAdapter():ArrayAdapter<String> = object:ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,ArrayList<String>()){
   override fun getView(position:Int,convertView:View?,parent:ViewGroup):View{val v=super.getView(position,convertView,parent) as TextView;v.setTextColor(Color.WHITE);v.textSize=14f;return v}
  }
  private fun round(color:Int)=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(color);setStroke(dp(1),Color.WHITE)}
 
  private fun makeUi(){
-  val root=LinearLayout(this).apply{orientation=1;setBackgroundColor(Color.rgb(12,25,34))}
+  val root=FrameLayout(this).apply{setBackgroundColor(Color.rgb(12,25,34))}
   val content=FrameLayout(this)
-  root.addView(content,LinearLayout.LayoutParams(-1,0,1f))
+  root.addView(content,FrameLayout.LayoutParams(-1,-1))
 
   // ---- Page 0: full-screen map only ----
   val mapPage=FrameLayout(this)
-  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(true);isTilesScaledToDpi=false;setTilesScaleFactor(1f);setUseDataConnection(!offline);minZoomLevel=3.0}
+  map=MapView(this).apply{setMultiTouchControls(true);setBuiltInZoomControls(false);isTilesScaledToDpi=false;setTilesScaleFactor(1f);setUseDataConnection(!offline);minZoomLevel=3.0}
   mapPage.addView(map,FrameLayout.LayoutParams(-1,-1))
   countChip=TextView(this).apply{text="☄ جارٍ التحميل…";textSize=13f;setTextColor(Color.WHITE);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(16).toFloat();setColor(Color.argb(220,16,35,45))}}
-  mapPage.addView(countChip,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(12),0,0)})
   fun fab(t:String,k:Int,f:()->Unit):TextView{
    val v=TextView(this).apply{text=t;textSize=22f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=round(Color.argb(235,16,35,45));setOnClickListener{f()}}
-   mapPage.addView(v,FrameLayout.LayoutParams(dp(52),dp(52),Gravity.BOTTOM or Gravity.END).apply{setMargins(0,0,dp(14),dp(90+k*62))})
    return v
   }
   fab("📍",0){locate(true)}
@@ -258,9 +268,18 @@ class MainActivity:AppCompatActivity() {
   navRow.addView(chip("⛔ إيقاف التوجيه"){navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()},cp())
   hudBox=LinearLayout(this).apply{orientation=1;visibility=View.GONE;setPadding(dp(8),dp(4),dp(8),dp(8));background=GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(238,0,96,110))}}
   hudBox.addView(hud);hudBox.addView(rulerRow);hudBox.addView(navRow)
-  mapPage.addView(hudBox,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(56),dp(12),0)})
-  coordChip=TextView(this).apply{textSize=11f;setTextColor(Color.WHITE);setPadding(dp(10),dp(5),dp(10),dp(5));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,16,35,45))};setOnClickListener{coordMenu()}}
-  mapPage.addView(coordChip,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.START).apply{setMargins(dp(10),0,0,dp(10))})
+  mapPage.addView(hudBox,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.LEFT).apply{setMargins(dp(8),dp(124),dp(8),0)})
+  coordChip=TextView(this).apply{textSize=16f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setTextColor(Color.BLACK);setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(245,255,255,255))};setOnClickListener{coordMenu()}}
+  infoBox=TextView(this).apply{textSize=14f;setTextColor(Color.rgb(30,30,30));setPadding(dp(12),dp(6),dp(12),dp(6));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(245,255,255,255))}}
+  val topBox=LinearLayout(this).apply{orientation=1}
+  topBox.addView(coordChip,LinearLayout.LayoutParams(-2,-2))
+  topBox.addView(infoBox,LinearLayout.LayoutParams(-2,-2).apply{setMargins(0,dp(6),0,0)})
+  mapPage.addView(topBox,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.LEFT).apply{setMargins(dp(8),dp(10),0,0)})
+  fun zbtn(t:String,k:Int,f:()->Unit){mapPage.addView(TextView(this).apply{text=t;textSize=30f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);background=GradientDrawable().apply{cornerRadius=dp(14).toFloat();setColor(Color.argb(160,60,60,60))};setOnClickListener{f()}},FrameLayout.LayoutParams(dp(54),dp(54),Gravity.BOTTOM or Gravity.RIGHT).apply{setMargins(0,0,dp(12),dp(86+k*62))})}
+  zbtn("+",1){map.controller.zoomIn()}
+  zbtn("−",0){map.controller.zoomOut()}
+  progressChip=TextView(this).apply{textSize=12f;setTextColor(Color.WHITE);visibility=View.GONE;setPadding(dp(10),dp(6),dp(10),dp(6));background=GradientDrawable().apply{cornerRadius=dp(10).toFloat();setColor(Color.argb(225,0,96,110))};setOnClickListener{visibility=View.GONE}}
+  mapPage.addView(progressChip,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.LEFT).apply{setMargins(dp(8),0,0,dp(150))})
   content.addView(mapPage,FrameLayout.LayoutParams(-1,-1));pages.add(mapPage)
 
   // ---- Page 1: meteorite list / search ----
@@ -310,6 +329,11 @@ class MainActivity:AppCompatActivity() {
   },lp(dp(48)))
   p3.addView(btn("⬇ تحميل أسماء القرى والآبار والعيون (OSM)"){downloadPlaces()},lp(dp(48)))
   dlInfo=note("");p3.addView(dlInfo)
+  dlInfo.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(t:CharSequence?,a:Int,b:Int,c:Int){}
+   override fun onTextChanged(t:CharSequence?,a:Int,b:Int,c:Int){}
+   override fun afterTextChanged(e:Editable?){val x=e?.toString()?:"";progressChip.text=x;progressChip.visibility=if(x.isBlank())View.GONE else View.VISIBLE}
+  })
   p3.addView(btn("🔄 إعادة تحميل قاعدة النيازك المحلية"){load(true)},lp(dp(48)))
   p3.addView(btn("📥 استيراد CSV من Meteoritical Bulletin"){val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="text/*"};startActivityForResult(i,4102)},lp(dp(48)))
   p3.addView(note("— المسارات والعلامات —"))
@@ -332,14 +356,21 @@ class MainActivity:AppCompatActivity() {
   sv.addView(p3,FrameLayout.LayoutParams(-1,-2))
   content.addView(sv,FrameLayout.LayoutParams(-1,-1));pages.add(sv)
 
-  // ---- bottom navigation ----
-  val nav=LinearLayout(this).apply{orientation=0;setBackgroundColor(Color.rgb(16,35,45))}
-  val names=listOf("🗺\nالخريطة","☄\nالنيازك","📡\nالرادار","⚙\nالإعدادات")
-  names.forEachIndexed{i,n->
-   val t=TextView(this).apply{text=n;textSize=12f;gravity=Gravity.CENTER;setTextColor(Color.LTGRAY);setOnClickListener{showPage(i)}}
-   tabs.add(t);nav.addView(t,LinearLayout.LayoutParams(0,dp(58),1f))
+  // ---- bottom toolbar (like Offline Maps) ----
+  toolbar=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER;setPadding(dp(4),dp(4),dp(4),dp(4));background=GradientDrawable().apply{cornerRadius=dp(14).toFloat();setColor(Color.argb(220,45,45,45))}}
+  listOf("☰","🗺","🚩","📡","🥾","📍").forEachIndexed{i,ic->
+   val t=TextView(this).apply{text=ic;textSize=24f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);setOnClickListener{openPanel(i)}}
+   tabViews.add(t);toolbar.addView(t,LinearLayout.LayoutParams(dp(54),dp(56)))
   }
-  root.addView(nav,LinearLayout.LayoutParams(-1,-2))
+  panelBox=LinearLayout(this).apply{orientation=1;visibility=View.GONE;setPadding(dp(8),dp(8),dp(8),dp(8));background=GradientDrawable().apply{cornerRadius=dp(18).toFloat();setColor(Color.WHITE)}}
+  root.addView(panelBox,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(10),0,dp(10),dp(80))})
+  root.addView(toolbar,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{setMargins(0,0,0,dp(10))})
+  restoreBtn=TextView(this).apply{text="☰";textSize=22f;gravity=Gravity.CENTER;setTextColor(Color.WHITE);visibility=View.GONE;background=GradientDrawable().apply{cornerRadius=dp(14).toFloat();setColor(Color.argb(220,45,45,45))};setOnClickListener{toolbar.visibility=View.VISIBLE;visibility=View.GONE}}
+  root.addView(restoreBtn,FrameLayout.LayoutParams(dp(52),dp(52),Gravity.BOTTOM or Gravity.LEFT).apply{setMargins(dp(10),0,0,dp(10))})
+  lockOverlay=FrameLayout(this).apply{visibility=View.GONE;isClickable=true;setOnTouchListener{_,_->true}}
+  val lockChip=TextView(this).apply{text="🔒 الشاشة مؤمّنة — اضغط مطولاً هنا للفتح";textSize=15f;setTextColor(Color.WHITE);gravity=Gravity.CENTER;setPadding(dp(16),dp(14),dp(16),dp(14));background=GradientDrawable().apply{cornerRadius=dp(14).toFloat();setColor(Color.argb(235,40,40,40))};setOnLongClickListener{lockScreen(false);true}}
+  lockOverlay.addView(lockChip,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{setMargins(0,0,0,dp(40))})
+  root.addView(lockOverlay,FrameLayout.LayoutParams(-1,-1))
   setContentView(root)
 
   query.setOnEditorActionListener{_,a,_->if(a==EditorInfo.IME_ACTION_SEARCH){applyFilter();true}else false}
@@ -349,9 +380,135 @@ class MainActivity:AppCompatActivity() {
  }
 
  private fun showPage(i:Int){
+  currentPage=i
   pages.forEachIndexed{k,v->v.visibility=if(k==i)View.VISIBLE else View.GONE}
-  tabs.forEachIndexed{k,t->t.setTextColor(if(k==i)Color.rgb(77,208,225) else Color.LTGRAY)}
+  closePanel()
   if(i!=1){val im=getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager;im.hideSoftInputFromWindow(query.windowToken,0)}
+ }
+ @Suppress("DEPRECATION","OVERRIDE_DEPRECATION")
+ override fun onBackPressed(){
+  if(panelIdx>=0){closePanel();return}
+  if(currentPage!=0){showPage(0);return}
+  super.onBackPressed()
+ }
+ private fun closePanel(){
+  if(!::panelBox.isInitialized)return
+  panelIdx=-1;panelBox.visibility=View.GONE
+  tabViews.forEach{it.background=null}
+ }
+ private fun panelData(idx:Int):Pair<String,List<Triple<String,String,()->Unit>>>{
+  val l=ArrayList<Triple<String,String,()->Unit>>()
+  fun it(i:String,t:String,f:()->Unit){l.add(Triple(i,t,f))}
+  return when(idx){
+   0->{
+    it("⛶","إخفاء القائمة"){toolbar.visibility=View.GONE;restoreBtn.visibility=View.VISIBLE}
+    it("🔒","تأمين الشاشة"){lockScreen(true)}
+    it("⚙","الإعدادات"){showPage(3)}
+    it("📤","تصدير العلامات والمسارات (GPX)"){exportGpx()}
+    it("📥","استيراد ملف GPX"){importGpx()}
+    it("⋮","المزيد…"){showAbout()}
+    it("⏻","إغلاق التطبيق"){finish()}
+    Pair("القائمة",l)
+   }
+   1->{
+    it("🗺","استعراض الخرائط (نمط الخريطة)"){pickStyle()}
+    it("🗂","الخرائط المعروضة (الطبقات)"){pickLayers()}
+    it("💾","تخزين منطقة للعمل بدون إنترنت"){storeMenu()}
+    it("📶",if(offline)"وضع عدم الاتصال: مفعّل (اضغط للاتصال)" else "وضع الاتصال: مفعّل (اضغط لعدم الاتصال)"){offlineButton.performClick()}
+    it("⚙","خيارات الخرائط الأخرى (MapTiler / MBTiles)"){showPage(3)}
+    Pair("خرائط، طبقات",l)
+   }
+   2->{
+    it("📂","استعراض المعالم (علاماتي)"){showWaypointList()}
+    it("☄","قائمة النيازك والبحث فيها"){showPage(1)}
+    it("➕","إنشاء معلم"){addWaypointMenu()}
+    it("🔍","البحث عن موقع"){searchDialog()}
+    Pair("المعالم",l)
+   }
+   3->{
+    it("🔄","تحديث أحداث NASA الآن"){refreshFireballs(false)}
+    it("📋","قائمة أحداث الكرات النارية"){showPage(2)}
+    it("🎯","عرض أحدث حدث على الخريطة"){val e=fireballEvents.firstOrNull();if(e!=null)goTo(e.latitude,e.longitude,6.0) else say("لا توجد أحداث بعد. حدّث أولاً.")}
+    it(if(prefs.getBoolean("alerts",false))"🔔" else "🔕",if(prefs.getBoolean("alerts",false))"تنبيهات الجزائر: مفعّلة (إيقاف)" else "تنبيهات الجزائر: متوقفة (تفعيل)"){toggleAlerts()}
+    Pair("الرادار",l)
+   }
+   4->{
+    val rec=prefs.getBoolean("rec_on",false)
+    it(if(rec)"⏹" else "⏺",if(rec)"إيقاف تسجيل المسار وحفظه" else "بدء تسجيل المسار"){toggleRecording()}
+    it("🥾","مساراتي المحفوظة"){showTracks()}
+    it("📏",if(rulerOn)"إنهاء المسطرة" else "المسطرة (قياس المسافة والاتجاه)"){toggleRuler()}
+    it(if(prefs.getBoolean("near_on",false))"🔔" else "🔕",if(prefs.getBoolean("near_on",false))"تنبيه الاقتراب: مفعّل (إيقاف)" else "تنبيه الاقتراب: متوقف (تفعيل)"){toggleNear()}
+    if(navTarget!=null)it("⛔","إيقاف التوجيه"){navTarget=null;routeOv.navTarget=null;updateHud();map.invalidate()}
+    Pair("التتبع",l)
+   }
+   else->{
+    it("📍","موقعي (GPS) وتتبّعه"){locate(true)}
+    it("✛","الإحداثيات: نسخ / ارتفاع / علامة هنا"){coordMenu()}
+    it("🧭","الشمال إلى الأعلى (إلغاء التدوير)"){map.setMapOrientation(0f)}
+    it("🇩🇿","عرض الجزائر كاملة"){map.setMapOrientation(0f);map.controller.setZoom(4.8);map.controller.animateTo(GeoPoint(28.0,2.5))}
+    it("🧲","إظهار/إخفاء البوصلة"){compass?.let{c->c.isEnabled=!c.isEnabled;map.invalidate()}}
+    Pair("الموقع والبوصلة",l)
+   }
+  }
+ }
+ private fun openPanel(idx:Int){
+  if(panelIdx==idx){closePanel();return}
+  val (ttl,items)=panelData(idx)
+  panelIdx=idx
+  panelBox.removeAllViews()
+  panelBox.addView(TextView(this).apply{text=ttl;textSize=13f;setTextColor(Color.rgb(120,120,120));setPadding(dp(10),dp(4),dp(10),dp(6))})
+  panelBox.addView(View(this).apply{setBackgroundColor(Color.rgb(225,225,225))},LinearLayout.LayoutParams(-1,dp(1)))
+  for((ic,label,act) in items){
+   val row=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),dp(14),dp(12),dp(14));setOnClickListener{closePanel();act()}}
+   row.addView(TextView(this).apply{text=ic;textSize=22f;gravity=Gravity.CENTER;setTextColor(Color.rgb(30,30,30))},LinearLayout.LayoutParams(dp(44),-2))
+   row.addView(TextView(this).apply{text=label;textSize=17f;setTextColor(Color.rgb(30,30,30))},LinearLayout.LayoutParams(0,-2,1f))
+   panelBox.addView(row,LinearLayout.LayoutParams(-1,-2))
+  }
+  panelBox.visibility=View.VISIBLE
+  tabViews.forEachIndexed{k,t->t.background=if(k==idx)GradientDrawable().apply{cornerRadius=dp(12).toFloat();setColor(Color.argb(235,255,255,255))} else null}
+ }
+ private fun lockScreen(on:Boolean){
+  lockOverlay.visibility=if(on)View.VISIBLE else View.GONE
+  if(on)window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+ }
+ private fun pickStyle(){
+  AlertDialog.Builder(this).setTitle("نمط الخريطة").setItems(styles.toTypedArray()){_,i->mapStyle.setSelection(i);setMapStyle(i);updateCoord()}.setNegativeButton("إغلاق",null).show()
+ }
+ private var showMetsL=true;private var showPlacesL=true;private var showWpsL=true;private var showFiresL=true
+ private fun pickLayers(){
+  val names=arrayOf("☄ نقاط النيازك","📍 أسماء الولايات والقرى والآبار","🚩 علاماتي","🔥 أحداث الرادار (NASA)")
+  val st=booleanArrayOf(showMetsL,showPlacesL,showWpsL,showFiresL)
+  AlertDialog.Builder(this).setTitle("الخرائط المعروضة").setMultiChoiceItems(names,st){_,i,c->
+   st[i]=c
+   showMetsL=st[0];showPlacesL=st[1];showWpsL=st[2];showFiresL=st[3]
+   points.showMets=showMetsL;points.showFires=showFiresL;places.isEnabled=showPlacesL;routeOv.showWps=showWpsL;map.invalidate()
+  }.setPositiveButton("تم",null).show()
+ }
+ private fun storeMenu(){
+  AlertDialog.Builder(this).setTitle("تخزين للعمل بدون إنترنت").setItems(arrayOf("🇩🇿 الجزائر كاملة (حتى zoom 9)","🔎 المنطقة الظاهرة بتفصيل أعلى (حتى zoom 14)","🏘 أسماء القرى والآبار والعيون")){_,i->
+   when(i){
+    0->downloadArea(BoundingBox(37.3,12.2,18.9,-8.8),3,9,"الجزائر كاملة")
+    1->{val bb=map.boundingBox;downloadArea(BoundingBox(bb.latNorth,bb.lonEast,bb.latSouth,bb.lonWest),map.zoomLevelDouble.toInt().coerceAtLeast(3),14,"المنطقة الظاهرة")}
+    else->downloadPlaces()
+   }
+  }.setNegativeButton("إغلاق",null).show()
+ }
+ private fun searchDialog(){
+  val e=EditText(this).apply{hint="اسم نيزك أو علامة أو قرية…";setSingleLine(true)}
+  AlertDialog.Builder(this).setTitle("🔍 البحث عن موقع").setView(e).setPositiveButton("بحث"){_,_->
+   val q=e.text.toString().trim().lowercase(Locale.ROOT)
+   if(q.isEmpty())return@setPositiveButton
+   val res=ArrayList<Triple<String,Double,Double>>()
+   for(w in waypoints)if(w.name.lowercase(Locale.ROOT).contains(q))res.add(Triple("🚩 ${w.name}",w.lat,w.lon))
+   for(p in places.items)if(p.name.lowercase(Locale.ROOT).contains(q)||p.alt.lowercase(Locale.ROOT).contains(q))res.add(Triple("📍 ${p.name} (${PlacesOverlay.kindAr(p.kind)})",p.lat,p.lon))
+   for(m in data)if(m.name.lowercase(Locale.ROOT).contains(q)||m.place.lowercase(Locale.ROOT).contains(q))res.add(Triple("☄ ${m.name}",m.lat,m.lon))
+   if(res.isEmpty()){say("لا نتائج.");return@setPositiveButton}
+   val shownRes=res.take(60)
+   AlertDialog.Builder(this).setTitle("${res.size} نتيجة").setItems(shownRes.map{it.first}.toTypedArray()){_,i->goTo(shownRes[i].second,shownRes[i].third,13.0)}.setNegativeButton("إغلاق",null).show()
+  }.setNegativeButton("إلغاء",null).show()
+ }
+ private fun showAbout(){
+  AlertDialog.Builder(this).setTitle("أطلس النيازك الجزائرية").setMessage("الإصدار 1.10\n\nالبيانات: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © Esri • © OpenStreetMap contributors • OpenTopoMap • MapTiler • EOX\n\nيعمل GPS والنقاط والعلامات بدون إنترنت.").setPositiveButton("حسناً",null).show()
  }
  private fun goTo(lat:Double,lon:Double,zoom:Double){showPage(0);map.controller.setZoom(zoom);map.controller.animateTo(GeoPoint(lat,lon))}
  private fun onGroupTap(g:List<Meteorite>,center:GeoPoint){
@@ -594,8 +751,10 @@ class MainActivity:AppCompatActivity() {
   if(!::coordChip.isInitialized)return
   val c=map.mapCenter
   var gps=""
-  try{val fx=myLoc?.lastFix;if(fx!=null)gps="\nGPS: ±${fx.accuracy.toInt()} م"+(if(fx.hasAltitude())" • ارتفاع ${fx.altitude.toInt()} م" else "")}catch(_:Exception){}
-  coordChip.text="✛ "+Geo.dec(c.latitude,c.longitude)+"\n"+Geo.dms(c.latitude,c.longitude)+gps
+  try{val fx=myLoc?.lastFix;if(fx!=null)gps="\nGPS ±${fx.accuracy.toInt()} م"+(if(fx.hasAltitude())" • ${fx.altitude.toInt()} م ارتفاع" else "")}catch(_:Exception){}
+  coordChip.text=Geo.dms(c.latitude,c.longitude)+gps
+  val st=prefs.getInt("style2",0).coerceIn(0,8)
+  infoBox.text="${styleShort[st]} • ${map.zoomLevelDouble.toInt()}/${map.maxZoomLevel.toInt()} • ☄ ${shown.size}"
  }
  private fun saveWps(){WpStore.save(prefs,waypoints);routeOv.wps=ArrayList(waypoints);map.invalidate()}
  private fun setNav(lat:Double,lon:Double,name:String){

@@ -21,6 +21,8 @@ class PointsOverlay(
  private val d=ctx.resources.displayMetrics.density
  var mets:List<Meteorite> = emptyList()
  var fires:List<FireballEvent> = emptyList()
+ var showMets=true
+ var showFires=true
 
  private class Hit(val x:Float,val y:Float,val r:Float,val met:Meteorite?,val fire:FireballEvent?)
  private val hits=ArrayList<Hit>()
@@ -60,7 +62,7 @@ class PointsOverlay(
   val gp=GeoPoint(0.0,0.0)
   halo.textSize=12*d;halo.strokeWidth=3.5f*d
   txt.textSize=12*d
-  for(m in mets){
+  for(m in (if(showMets)mets else emptyList())){
    gp.setCoords(m.lat,m.lon)
    proj.toPixels(gp,pt)
    val x=pt.x.toFloat();val y=pt.y.toFloat()
@@ -68,7 +70,7 @@ class PointsOverlay(
    pin(c,x,y,r,if(isFell(m))Color.rgb(229,57,53) else Color.rgb(244,81,30))
    hits.add(Hit(x,y-2.1f*r,r,m,null))
   }
-  for(ev in fires){
+  for(ev in (if(showFires)fires else emptyList())){
    gp.setCoords(ev.latitude,ev.longitude)
    proj.toPixels(gp,pt)
    val x=pt.x.toFloat();val y=pt.y.toFloat()
