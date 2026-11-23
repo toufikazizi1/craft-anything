@@ -24,23 +24,37 @@ jobs:
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MeteoriteAtlas-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+      - name: Decode keystore
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then echo "$KS" | base64 -d > "$RUNNER_TEMP/upload.jks"; echo "KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> $GITHUB_ENV; fi
 
-      - name: Publish APK as release (direct phone download)
+      - name: Build signed release (AAB + APK)
+        if: env.KEYSTORE_FILE != ''
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: gradle --no-daemon :app:bundleRelease :app:assembleRelease
+
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk MeteoriteAtlas.apk
-          gh release create "meteorite-apk-${{ github.run_number }}" MeteoriteAtlas.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk MeteoriteAtlas-debug.apk
+          FILES="MeteoriteAtlas-debug.apk"
+          if [ -n "$KEYSTORE_FILE" ]; then
+            cp app/build/outputs/apk/release/app-release.apk MeteoriteAtlas.apk
+            cp app/build/outputs/bundle/release/app-release.aab MeteoriteAtlas.aab
+            FILES="MeteoriteAtlas.apk MeteoriteAtlas.aab MeteoriteAtlas-debug.apk"
+          else
+            cp MeteoriteAtlas-debug.apk MeteoriteAtlas.apk
+            FILES="MeteoriteAtlas.apk"
+          fi
+          gh release create "meteorite-apk-${{ github.run_number }}" $FILES \
             --target "${{ github.sha }}" --title "Meteorite Atlas APK #${{ github.run_number }}" \
-            --notes "Debug APK. Install on Android (allow unknown sources)."
+            --notes "Install APK on Android. AAB (if present) is for Google Play."

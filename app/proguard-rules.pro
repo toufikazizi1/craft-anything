@@ -1,0 +1,7 @@
+-keep class org.osmdroid.** { *; }
+-dontwarn org.osmdroid.**
+-keep class androidx.work.** { *; }
+-keep class com.meteoriteatlas.AlertWorker { *; }
+-keep class com.meteoriteatlas.TrackService { *; }
+-dontwarn javax.annotation.**
+-dontwarn org.slf4j.**
