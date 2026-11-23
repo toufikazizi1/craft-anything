@@ -869,7 +869,7 @@ class MainActivity:AppCompatActivity() {
    }
    else->{}
   }
-  try{map.overlayManager.tilesOverlay.apply{setLoadingBackgroundColor(Color.rgb(22,34,42));setLoadingLineColor(Color.rgb(40,58,68))}}catch(_:Exception){}
+  try{map.overlayManager.tilesOverlay.apply{setLoadingBackgroundColor(Color.rgb(22,34,42));setLoadingLineColor(Color.rgb(40,58,68));setColorFilter(android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(floatArrayOf(1.18f,0f,0f,0f,26f, 0f,1.18f,0f,0f,26f, 0f,0f,1.18f,0f,26f, 0f,0f,0f,1f,0f))))}}catch(_:Exception){}
   prefs.edit().putInt("style2",i).apply();map.invalidate()
  }
  private fun load(force:Boolean){
