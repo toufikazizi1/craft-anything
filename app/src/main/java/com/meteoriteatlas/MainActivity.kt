@@ -170,7 +170,6 @@ class MainActivity:AppCompatActivity() {
   }catch(_:Exception){}
   ticks++;if(ticks==2||ticks%400==0)refreshFireballs(true)
   if(ticks==4&&!placesFile.exists()&&!downloading&&online())downloadPlaces()
-  if(ticks==8&&!prefs.getBoolean("algeria_done",false)&&!downloading&&online()){prefs.edit().putBoolean("algeria_done",true).apply();downloadArea(BoundingBox(37.3,12.2,18.9,-8.8),3,9,"الجزائر كاملة")}
   ui.postDelayed(this,1500)
  }}
 
@@ -324,7 +323,7 @@ class MainActivity:AppCompatActivity() {
   offlineButton=Button(this)
   dlInfo=note("");p3.addView(dlInfo)
   nearBtn=btn(""){toggleNear()};updateNearBtn()
-  p3.addView(note("كل شيء تلقائي: الخريطة التي تتصفحها تُحفظ وتبقى بعد قطع الإنترنت، والجزائر وأسماء القرى والآبار تُحمّل وحدها."))
+  p3.addView(note("كل شيء تلقائي: الخريطة التي تتصفحها تُحفظ وتبقى بعد قطع الإنترنت، وأسماء القرى والآبار تُحمّل وحدها."))
   p3.addView(btn("🥾 مساراتي المحفوظة"){showTracks()},lp(dp(48)))
   p3.addView(btn("📂 رفع ملف النقاط والآبار (GPX)"){importGpx()},lp(dp(48)))
   p3.addView(note("• النقاط تعمل بدون إنترنت (محفوظة في التطبيق).\n• الخريطة تُخزَّن مؤقتاً أثناء تصفحها؛ تصفّح المنطقة وأنت متصل لتبقى متاحة بعدها.\n• GPS يعمل بدون إنترنت.\n• التنبيهات والرادار يحتاجان إنترنت.\n\nالمصادر: Meteoritical Bulletin • NASA/JPL CNEOS\nالخرائط: © OpenStreetMap contributors • © Esri • OpenTopoMap"))
